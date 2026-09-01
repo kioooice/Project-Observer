@@ -6,8 +6,14 @@ import { discoverProjects } from './scanner.mjs';
 import { attachGitContext } from './git-context.mjs';
 import { attachProjectIdentities } from './identity.mjs';
 import { attachCodexSessions } from './codex.mjs';
+import { attachRepositoryMaps } from './repository-map.mjs';
 import { attachProjectInsights } from './project-insight.mjs';
 import { attachProjectMemory, getProjectMemoryStoreInfo } from './project-memory.mjs';
+import {
+  attachProjectUnderstanding,
+  synthesizeProjectUnderstanding,
+  getProjectUnderstandingInfo
+} from './project-understanding.mjs';
 import {
   attachKnownPathAliases,
   recordObservations,
@@ -81,8 +87,10 @@ async function enrichProjects(projects) {
   await attachProjectIdentities(projects);
   await attachKnownPathAliases(projects);
   const enriched = await attachCodexSessions(projects);
+  await attachRepositoryMaps(enriched.projects);
   attachProjectInsights(enriched.projects);
   await attachProjectMemory(enriched.projects);
+  await attachProjectUnderstanding(enriched.projects);
   const observation = await recordObservations(enriched.projects);
   return {
     projects: enriched.projects,
@@ -92,7 +100,8 @@ async function enrichProjects(projects) {
       writtenThisScan: observation.written
     },
     sessionBindingStore: getSessionBindingStoreInfo(),
-    memoryStore: getProjectMemoryStoreInfo()
+    memoryStore: getProjectMemoryStoreInfo(),
+    understanding: getProjectUnderstandingInfo()
   };
 }
 
@@ -137,6 +146,13 @@ async function loadProjectLibrary() {
   };
 }
 
+async function loadSingleProject(projectPath) {
+  const base = await discoverProjects(projectPath, { maxDepth: 0, maxProjects: 1 });
+  if (!base.projects[0]) throw new Error('没有识别到该项目');
+  const enriched = await enrichProjects([base.projects[0]]);
+  return enriched.projects[0];
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${host}:${port}`);
@@ -174,6 +190,14 @@ const server = http.createServer(async (req, res) => {
       const projectPath = url.searchParams.get('path');
       const removed = await removeRegisteredProject(projectPath, projectRoot);
       return sendJson(res, 200, { ok: true, removed });
+    }
+
+    if (url.pathname === '/api/project-understanding' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      if (!body.path) return sendJson(res, 400, { error: 'Missing project path' });
+      const project = await loadSingleProject(body.path);
+      const understanding = await synthesizeProjectUnderstanding(project);
+      return sendJson(res, 200, { ok: true, understanding, store: getProjectUnderstandingInfo() });
     }
 
     if (url.pathname === '/api/self' && req.method === 'GET') {
@@ -218,6 +242,7 @@ server.listen(port, host, async () => {
   console.log(`Project Observer: http://${host}:${port}`);
   console.log(`Project library: ${getProjectRegistryInfo().registryFile}`);
   console.log(`Project memory: ${getProjectMemoryStoreInfo().memoryFile}`);
+  console.log(`Project understanding: ${getProjectUnderstandingInfo().understandingFile}`);
   console.log(`Observation store: ${getObservationStoreInfo().storeDir}`);
   console.log(`Session bindings: ${getSessionBindingStoreInfo().bindingFile}`);
 });
