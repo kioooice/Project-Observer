@@ -3,7 +3,7 @@
   "name": "Project Observer",
   "summary": "一个本地优先的多项目状态工作台，用来恢复项目现状、开发历程和验证证据，尤其适合 AI 辅助开发的软件项目。",
   "status": "active",
-  "stage": "v0.3.3 / 新版 Codex 状态库适配",
+  "stage": "v0.3.4 / Codex 项目根目录归属",
   "startedAt": "2026-09-01",
   "goals": [
     { "id": "multi-project-scan", "title": "扫描并识别多个本地项目", "status": "done" },
@@ -13,6 +13,7 @@
     { "id": "document-recovery", "title": "从 README / docs / PLAN / TODO 等文档恢复项目信息和明确未完成项", "status": "done" },
     { "id": "codex-history", "title": "读取 Codex 本地 Session 并关联到对应项目", "status": "done" },
     { "id": "codex-state-db", "title": "兼容新版 Codex 的 state_5.sqlite 线程状态库，并继续兼容旧 JSONL 会话", "status": "done" },
+    { "id": "codex-project-roots", "title": "解析 Codex projects / project_roots，把线程 project_id 还原为实际项目根地址并用于归属", "status": "done" },
     { "id": "project-identity", "title": "使用 Git remote、当前路径和历史路径建立稳定项目身份", "status": "done" },
     { "id": "git-development-summary", "title": "把连续 Git 提交合并为中文开发摘要，而不是直接展示英文提交信息", "status": "done" },
     { "id": "codex-diagnostics", "title": "区分无本项目 Codex 会话与会话读取或匹配失败，并提供未匹配诊断", "status": "done" },
@@ -29,6 +30,7 @@
     "AI 开发记录第一阶段只提取会话事实，不使用 LLM 二次总结。",
     "Session ID 只标识会话；项目归属优先依据 Git remote，其次才是当前路径和历史路径。",
     "Git 展示面向人描述一次开发做了什么；原始 commit message 只作为底层证据，不作为默认界面内容。",
-    "Codex 会话数据源采用新版 state_5.sqlite 优先、sessions JSONL 兼容的双通道策略。"
+    "Codex 会话数据源采用新版 state_5.sqlite 优先、sessions JSONL 兼容的双通道策略。",
+    "新版 Codex 的 thread.project_id 必须继续解析 projects 与 project_roots；project_id 本身不是仓库身份。"
   ]
 }
