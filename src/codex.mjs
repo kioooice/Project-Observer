@@ -5,7 +5,11 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { isInsidePath, normalizeFsPath, normalizeGitRemote } from './identity.mjs';
 
-const DEFAULT_BASE = path.join(os.homedir(), '.codex', 'sessions');
+const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
+const configuredSessionsDir = process.env.CODEX_SESSIONS_DIR ? path.resolve(process.env.CODEX_SESSIONS_DIR) : null;
+const DEFAULT_ROOTS = configuredSessionsDir
+  ? [configuredSessionsDir]
+  : [path.join(codexHome, 'sessions'), path.join(codexHome, 'archived_sessions')];
 const MAX_FILES = Math.max(20, Math.min(1000, Number(process.env.PROJECT_OBSERVER_CODEX_MAX_SESSIONS || 250)));
 
 function cleanPrompt(value) {
@@ -46,9 +50,20 @@ function parseGitInfo(raw) {
   };
 }
 
-async function listRecentJsonl(basePath) {
+async function accessibleRoots() {
+  const roots = [];
+  for (const candidate of DEFAULT_ROOTS) {
+    try {
+      await fsp.access(candidate);
+      roots.push(path.resolve(candidate));
+    } catch {}
+  }
+  return roots;
+}
+
+async function listRecentJsonl(basePaths) {
   const found = [];
-  const queue = [basePath];
+  const queue = [...basePaths];
 
   while (queue.length) {
     const dir = queue.shift();
@@ -213,16 +228,22 @@ function matchProject(session, projects) {
   return null;
 }
 
+function unmatchedReason(session) {
+  if (session.git?.remoteKey) return 'Git remote 未命中当前扫描到的项目';
+  return '会话没有可用 Git remote，且工作目录未命中当前项目路径';
+}
+
 export async function attachCodexSessions(projects) {
-  const basePath = path.resolve(process.env.CODEX_SESSIONS_DIR || DEFAULT_BASE);
-  let accessible = true;
-  try { await fsp.access(basePath); } catch { accessible = false; }
+  const roots = await accessibleRoots();
+  const available = roots.length > 0;
+  const sourcePath = roots[0] || DEFAULT_ROOTS[0];
 
   for (const project of projects) {
     project.agentSessions = {
       codex: {
-        available: accessible,
-        sourcePath: basePath,
+        available,
+        sourcePath,
+        sourcePaths: roots,
         sessionCount: 0,
         lastActivity: null,
         sessions: []
@@ -230,33 +251,49 @@ export async function attachCodexSessions(projects) {
     };
   }
 
-  if (!accessible || !projects.length) {
+  if (!available || !projects.length) {
     return {
       projects,
       meta: {
         codex: {
-          available: accessible,
-          sourcePath: basePath,
+          available,
+          sourcePath,
+          sourcePaths: roots,
           scannedFiles: 0,
+          parsedSessions: 0,
           matchedSessions: 0,
           unmatchedSessions: 0,
+          unmatchedSamples: [],
           matchMethods: {}
         }
       }
     };
   }
 
-  const files = await listRecentJsonl(basePath);
+  const files = await listRecentJsonl(roots);
   let matchedSessions = 0;
   let parsedSessions = 0;
   const matchMethods = {};
+  const unmatchedSamples = [];
 
   for (const file of files) {
     const session = await parseSession(file);
     if (!session) continue;
     parsedSessions += 1;
     const result = matchProject(session, projects);
-    if (!result) continue;
+    if (!result) {
+      if (unmatchedSamples.length < 6) {
+        unmatchedSamples.push({
+          id: session.id,
+          projectPath: session.projectPath,
+          remoteKey: session.git?.remoteKey || null,
+          originUrl: session.git?.originUrl || null,
+          lastActivity: session.lastActivity,
+          reason: unmatchedReason(session)
+        });
+      }
+      continue;
+    }
 
     matchedSessions += 1;
     matchMethods[result.match.type] = (matchMethods[result.match.type] || 0) + 1;
@@ -283,11 +320,13 @@ export async function attachCodexSessions(projects) {
     meta: {
       codex: {
         available: true,
-        sourcePath: basePath,
+        sourcePath,
+        sourcePaths: roots,
         scannedFiles: files.length,
         parsedSessions,
         matchedSessions,
         unmatchedSessions: Math.max(0, parsedSessions - matchedSessions),
+        unmatchedSamples,
         matchMethods
       }
     }

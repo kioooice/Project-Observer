@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverProjects } from './scanner.mjs';
+import { attachGitContext } from './git-context.mjs';
 import { attachProjectIdentities } from './identity.mjs';
 import { attachCodexSessions } from './codex.mjs';
 import { attachKnownPathAliases, recordObservations, getProjectObservations, getObservationStoreInfo } from './observations.mjs';
@@ -44,6 +45,7 @@ async function serveStatic(req, res) {
 
 async function scanWithActivity(root, depth, maxProjects = 80) {
   const base = await discoverProjects(root, { maxDepth: depth, maxProjects });
+  await attachGitContext(base.projects);
   await attachProjectIdentities(base.projects);
   await attachKnownPathAliases(base.projects);
   const enriched = await attachCodexSessions(base.projects);
