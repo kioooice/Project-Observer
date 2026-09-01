@@ -190,7 +190,49 @@ function bestPathMatch(sessionPath, projects, useAliases = false) {
   return best?.project || null;
 }
 
+function matchCodexProjectRoots(session, projects) {
+  const roots = session.codexProject?.roots || [];
+  if (!roots.length) return null;
+
+  for (const root of roots) {
+    const remoteKey = normalizeGitRemote(root);
+    if (remoteKey && !remoteKey.startsWith('local:')) {
+      const remoteMatches = projects.filter(project => project.identity?.remoteKey === remoteKey);
+      if (remoteMatches.length === 1) {
+        return {
+          project: remoteMatches[0],
+          match: { type: 'codex_project_remote', confidence: 'high', reason: 'Codex 项目根地址对应同一 Git remote' }
+        };
+      }
+    }
+  }
+
+  for (const root of roots) {
+    const remoteKey = normalizeGitRemote(root);
+    if (remoteKey && !remoteKey.startsWith('local:')) continue;
+    const current = bestPathMatch(root, projects, false);
+    if (current) {
+      return {
+        project: current,
+        match: { type: 'codex_project_path', confidence: 'high', reason: 'Codex 项目根目录属于当前项目' }
+      };
+    }
+    const historical = bestPathMatch(root, projects, true);
+    if (historical) {
+      return {
+        project: historical,
+        match: { type: 'codex_project_historical_path', confidence: 'medium', reason: 'Codex 项目根目录命中历史路径' }
+      };
+    }
+  }
+
+  return null;
+}
+
 function matchProject(session, projects) {
+  const canonicalProject = matchCodexProjectRoots(session, projects);
+  if (canonicalProject) return canonicalProject;
+
   const sessionRemoteKey = session.git?.remoteKey || null;
 
   if (sessionRemoteKey) {
@@ -232,6 +274,7 @@ function matchProject(session, projects) {
 }
 
 function unmatchedReason(session) {
+  if (session.codexProject?.roots?.length) return 'Codex 已提供项目归属，但项目根地址未命中当前扫描到的仓库';
   if (session.git?.remoteKey) return 'Git remote 未命中当前扫描到的项目';
   if (session.projectPath) return '工作目录未命中当前项目路径或历史路径';
   if (session.projectId) return '只有 Codex project_id，当前还没有对应到本地仓库身份';
@@ -260,6 +303,7 @@ function mergeSession(existing, incoming) {
     userTurns: Math.max(existing.userTurns || 0, incoming.userTurns || 0),
     modelProvider: incoming.modelProvider || existing.modelProvider || null,
     projectId: incoming.projectId || existing.projectId || null,
+    codexProject: incoming.codexProject || existing.codexProject || null,
     rolloutPath: incoming.rolloutPath || existing.rolloutPath || null,
     git: {
       ...(existing.git || {}),
@@ -323,8 +367,11 @@ export async function attachCodexSessions(projects) {
           id: session.id,
           projectPath: session.projectPath,
           projectId: session.projectId || null,
+          codexProjectName: session.codexProject?.name || null,
+          codexProjectRoots: session.codexProject?.roots || [],
           remoteKey: session.git?.remoteKey || null,
           originUrl: session.git?.originUrl || null,
+          originSource: session.git?.originSource || null,
           lastActivity: session.lastActivity,
           storage: session.storages?.join(' + ') || session.storage || null,
           reason: unmatchedReason(session)
@@ -372,6 +419,8 @@ export async function attachCodexSessions(projects) {
           path: stateDb.path,
           reader: stateDb.reader,
           threadCount: stateDb.threadCount || 0,
+          projectCount: stateDb.projectCount || 0,
+          projectRootCount: stateDb.projectRootCount || 0,
           error: stateDb.error || null
         },
         jsonl: {
