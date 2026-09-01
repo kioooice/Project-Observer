@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "Project Observer",
+  "summary": "A local-first multi-project dashboard that restores project state, development history, and verification evidence for AI-assisted software projects.",
+  "status": "active",
+  "stage": "MVP / self-monitoring",
+  "startedAt": "2026-09-01",
+  "goals": [
+    { "id": "multi-project-scan", "title": "Scan multiple local projects", "status": "in_progress" },
+    { "id": "git-state", "title": "Read Git activity and working-tree state", "status": "in_progress" },
+    { "id": "project-dashboard", "title": "Show project overview and per-project details", "status": "in_progress" },
+    { "id": "self-monitor", "title": "Observe Project Observer itself from day one", "status": "in_progress" },
+    { "id": "state-model", "title": "Evolve a general Project State Model", "status": "planned" },
+    { "id": "agent-history", "title": "Import Codex / Claude / other agent sessions", "status": "planned" },
+    { "id": "verification", "title": "Separate claimed completion from verified completion", "status": "planned" },
+    { "id": "project-health", "title": "Track long-term project complexity and maintainability signals", "status": "planned" }
+  ],
+  "notes": [
+    "Do not invent product next steps by default; only show evidence-backed unfinished items.",
+    "The tool must remain general-purpose and analyze itself using the same rules as other projects."
+  ]
+}

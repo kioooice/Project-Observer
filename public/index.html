@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Project Observer</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">LOCAL-FIRST · PROJECT STATE</p>
+        <h1>Project Observer</h1>
+        <p class="subtitle">先看清项目现在是什么，再决定要不要继续开发。</p>
+      </div>
+      <div class="hero-badge"><span class="dot"></span><span>Self monitoring enabled</span></div>
+    </header>
+
+    <section class="toolbar panel">
+      <label>
+        <span>扫描根目录</span>
+        <input id="rootInput" placeholder="例如 D:\\Projects" />
+      </label>
+      <label class="depth-label">
+        <span>扫描深度</span>
+        <select id="depthSelect">
+          <option value="1">1</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+      </label>
+      <button id="scanBtn" type="button">扫描项目</button>
+      <div id="scanMessage" class="message" aria-live="polite"></div>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="workspace">
+      <div>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">PROJECTS</p>
+            <h2>项目总览</h2>
+          </div>
+          <span id="scanMeta" class="muted"></span>
+        </div>
+        <div id="projectGrid" class="project-grid"></div>
+      </div>
+
+      <aside id="detailPanel" class="detail panel" aria-live="polite">
+        <div class="empty-detail">
+          <p class="eyebrow">DETAIL</p>
+          <h2>选择一个项目</h2>
+          <p>查看当前阶段、目标、Git 活动与明确的状态证据。</p>
+        </div>
+      </aside>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "project-observer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first multi-project state dashboard for AI-assisted development.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
