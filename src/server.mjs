@@ -7,6 +7,7 @@ import { attachGitContext } from './git-context.mjs';
 import { attachProjectIdentities } from './identity.mjs';
 import { attachCodexSessions } from './codex.mjs';
 import { attachProjectInsights } from './project-insight.mjs';
+import { attachProjectMemory, getProjectMemoryStoreInfo } from './project-memory.mjs';
 import {
   attachKnownPathAliases,
   recordObservations,
@@ -81,6 +82,7 @@ async function enrichProjects(projects) {
   await attachKnownPathAliases(projects);
   const enriched = await attachCodexSessions(projects);
   attachProjectInsights(enriched.projects);
+  await attachProjectMemory(enriched.projects);
   const observation = await recordObservations(enriched.projects);
   return {
     projects: enriched.projects,
@@ -89,7 +91,8 @@ async function enrichProjects(projects) {
       ...getObservationStoreInfo(),
       writtenThisScan: observation.written
     },
-    sessionBindingStore: getSessionBindingStoreInfo()
+    sessionBindingStore: getSessionBindingStoreInfo(),
+    memoryStore: getProjectMemoryStoreInfo()
   };
 }
 
@@ -214,6 +217,7 @@ server.listen(port, host, async () => {
   await listRegisteredProjects(projectRoot);
   console.log(`Project Observer: http://${host}:${port}`);
   console.log(`Project library: ${getProjectRegistryInfo().registryFile}`);
+  console.log(`Project memory: ${getProjectMemoryStoreInfo().memoryFile}`);
   console.log(`Observation store: ${getObservationStoreInfo().storeDir}`);
   console.log(`Session bindings: ${getSessionBindingStoreInfo().bindingFile}`);
 });
