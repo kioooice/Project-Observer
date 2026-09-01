@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { isInsidePath, normalizeFsPath, normalizeGitRemote } from './identity.mjs';
+import { readCodexStateThreads } from './codex-state.mjs';
 
 const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 const configuredSessionsDir = process.env.CODEX_SESSIONS_DIR ? path.resolve(process.env.CODEX_SESSIONS_DIR) : null;
@@ -153,7 +154,7 @@ async function parseSession(file) {
     rl.close();
   }
 
-  if (!meta?.cwd) return null;
+  if (!meta?.cwd && !meta?.git?.remoteKey) return null;
   const started = new Date(meta.timestamp || file.mtimeMs || Date.now());
   const startedAt = Number.isNaN(started.getTime()) ? lastActivity : started.toISOString();
 
@@ -165,12 +166,14 @@ async function parseSession(file) {
     title: firstPrompt || 'Codex 会话（未恢复首条需求）',
     userTurns,
     modelProvider: meta.modelProvider,
+    storage: 'jsonl',
     git: meta.git
   };
 }
 
 function bestPathMatch(sessionPath, projects, useAliases = false) {
   const candidate = normalizeFsPath(sessionPath);
+  if (!candidate) return null;
   let best = null;
 
   for (const project of projects) {
@@ -230,20 +233,57 @@ function matchProject(session, projects) {
 
 function unmatchedReason(session) {
   if (session.git?.remoteKey) return 'Git remote 未命中当前扫描到的项目';
-  return '会话没有可用 Git remote，且工作目录未命中当前项目路径';
+  if (session.projectPath) return '工作目录未命中当前项目路径或历史路径';
+  if (session.projectId) return '只有 Codex project_id，当前还没有对应到本地仓库身份';
+  return '会话缺少可用于项目归属的 Git remote 和工作目录';
+}
+
+function preferTitle(a, b) {
+  const generic = value => !value || value.startsWith('Codex 会话（');
+  if (!generic(b)) return b;
+  if (!generic(a)) return a;
+  return b || a || 'Codex 会话';
+}
+
+function mergeSession(existing, incoming) {
+  if (!existing) return { ...incoming, storages: [incoming.storage].filter(Boolean) };
+  const storages = [...new Set([...(existing.storages || [existing.storage]), incoming.storage].filter(Boolean))];
+  const existingLast = String(existing.lastActivity || '');
+  const incomingLast = String(incoming.lastActivity || '');
+  return {
+    ...existing,
+    ...incoming,
+    projectPath: incoming.projectPath || existing.projectPath,
+    startedAt: [existing.startedAt, incoming.startedAt].filter(Boolean).sort()[0] || null,
+    lastActivity: incomingLast > existingLast ? incoming.lastActivity : existing.lastActivity,
+    title: preferTitle(existing.title, incoming.title),
+    userTurns: Math.max(existing.userTurns || 0, incoming.userTurns || 0),
+    modelProvider: incoming.modelProvider || existing.modelProvider || null,
+    projectId: incoming.projectId || existing.projectId || null,
+    rolloutPath: incoming.rolloutPath || existing.rolloutPath || null,
+    git: {
+      ...(existing.git || {}),
+      ...(incoming.git || {}),
+      originUrl: incoming.git?.originUrl || existing.git?.originUrl || null,
+      remoteKey: incoming.git?.remoteKey || existing.git?.remoteKey || null
+    },
+    storages
+  };
 }
 
 export async function attachCodexSessions(projects) {
-  const roots = await accessibleRoots();
-  const available = roots.length > 0;
-  const sourcePath = roots[0] || DEFAULT_ROOTS[0];
+  const [roots, stateDb] = await Promise.all([accessibleRoots(), readCodexStateThreads()]);
+  const jsonlAvailable = roots.length > 0;
+  const available = jsonlAvailable || stateDb.available;
+  const sourcePaths = [stateDb.available ? stateDb.path : null, ...roots].filter(Boolean);
+  const sourcePath = sourcePaths[0] || stateDb.path || DEFAULT_ROOTS[0];
 
   for (const project of projects) {
     project.agentSessions = {
       codex: {
         available,
         sourcePath,
-        sourcePaths: roots,
+        sourcePaths,
         sessionCount: 0,
         lastActivity: null,
         sessions: []
@@ -251,44 +291,42 @@ export async function attachCodexSessions(projects) {
     };
   }
 
-  if (!available || !projects.length) {
-    return {
-      projects,
-      meta: {
-        codex: {
-          available,
-          sourcePath,
-          sourcePaths: roots,
-          scannedFiles: 0,
-          parsedSessions: 0,
-          matchedSessions: 0,
-          unmatchedSessions: 0,
-          unmatchedSamples: [],
-          matchMethods: {}
-        }
-      }
-    };
+  if (!projects.length) {
+    return { projects, meta: { codex: { available, sourcePath, sourcePaths, parsedSessions: 0 } } };
   }
 
-  const files = await listRecentJsonl(roots);
-  let matchedSessions = 0;
-  let parsedSessions = 0;
-  const matchMethods = {};
-  const unmatchedSamples = [];
+  const sessionsById = new Map();
+  for (const session of stateDb.sessions || []) {
+    sessionsById.set(session.id, mergeSession(sessionsById.get(session.id), session));
+  }
 
+  const files = jsonlAvailable ? await listRecentJsonl(roots) : [];
+  let jsonlParsed = 0;
   for (const file of files) {
     const session = await parseSession(file);
     if (!session) continue;
-    parsedSessions += 1;
+    jsonlParsed += 1;
+    sessionsById.set(session.id, mergeSession(sessionsById.get(session.id), session));
+  }
+
+  let matchedSessions = 0;
+  const matchMethods = {};
+  const unmatchedSamples = [];
+  const allSessions = [...sessionsById.values()]
+    .sort((a, b) => String(b.lastActivity || '').localeCompare(String(a.lastActivity || '')));
+
+  for (const session of allSessions) {
     const result = matchProject(session, projects);
     if (!result) {
-      if (unmatchedSamples.length < 6) {
+      if (unmatchedSamples.length < 8) {
         unmatchedSamples.push({
           id: session.id,
           projectPath: session.projectPath,
+          projectId: session.projectId || null,
           remoteKey: session.git?.remoteKey || null,
           originUrl: session.git?.originUrl || null,
           lastActivity: session.lastActivity,
+          storage: session.storages?.join(' + ') || session.storage || null,
           reason: unmatchedReason(session)
         });
       }
@@ -309,25 +347,39 @@ export async function attachCodexSessions(projects) {
 
   for (const project of projects) {
     const bucket = project.agentSessions.codex;
-    bucket.sessions.sort((a, b) => String(b.lastActivity).localeCompare(String(a.lastActivity)));
+    bucket.sessions.sort((a, b) => String(b.lastActivity || '').localeCompare(String(a.lastActivity || '')));
     bucket.sessionCount = bucket.sessions.length;
     bucket.lastActivity = bucket.sessions[0]?.lastActivity || null;
-    bucket.sessions = bucket.sessions.slice(0, 20);
+    bucket.sessions = bucket.sessions.slice(0, 30);
   }
 
   return {
     projects,
     meta: {
       codex: {
-        available: true,
+        available,
         sourcePath,
-        sourcePaths: roots,
+        sourcePaths,
         scannedFiles: files.length,
-        parsedSessions,
+        parsedSessions: allSessions.length,
         matchedSessions,
-        unmatchedSessions: Math.max(0, parsedSessions - matchedSessions),
+        unmatchedSessions: Math.max(0, allSessions.length - matchedSessions),
         unmatchedSamples,
-        matchMethods
+        matchMethods,
+        stateDb: {
+          available: stateDb.available,
+          readable: stateDb.readable ?? false,
+          path: stateDb.path,
+          reader: stateDb.reader,
+          threadCount: stateDb.threadCount || 0,
+          error: stateDb.error || null
+        },
+        jsonl: {
+          available: jsonlAvailable,
+          sourcePaths: roots,
+          scannedFiles: files.length,
+          parsedSessions: jsonlParsed
+        }
       }
     }
   };
