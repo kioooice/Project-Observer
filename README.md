@@ -1,26 +1,25 @@
 # Project Observer
 
-本地优先的多项目状态与 AI 开发可观察性工具。目标不是替用户规划项目，而是尽可能忠实地恢复：**项目是什么、做到哪里、经历过什么、哪些状态有证据、为什么停在这里。**
+本地优先的多项目状态与 AI 开发可观察性工具。目标不是替项目决定“下一步做什么”，而是尽可能忠实地恢复：**项目是什么、发生过什么、当前做到什么程度、哪些信息有证据支持，以及项目随着时间如何变化。**
 
-## 当前版本 v0.2
+## 当前版本 v0.3
 
 已经具备：
 - 扫描指定根目录下的多个 Git 仓库 / Project Observer 项目；
-- 自动读取 Git branch、未提交文件数、最近 commit 和近期历史；
-- 读取可选 `.project-state.json` 作为显式项目状态；
-- 自动读取 `README / docs / PLAN / TODO / STATUS / HANDOFF / package.json` 等项目文档；
-- 从 README 恢复项目名称和摘要；
-- 从 Markdown checklist 恢复明确目标、完成项和未完成项；
-- 在界面中显示信息来源和“信息覆盖”，避免把自动恢复结果伪装成确定事实；
-- 显式状态始终优先于自动恢复；
-- Self Monitor：本项目自身使用和其他项目完全相同的分析逻辑。
+- 读取 Git branch、未提交文件、最近 commit 和近期历史；
+- 读取可选 `.project-state.json` 作为显式状态；
+- 从 README / docs / PLAN / TODO 等文档恢复摘要、清单和明确未完成项；
+- 读取 Codex CLI 本地 Session，并按 Session 的 `cwd` 关联到项目；
+- 将 Git commit 与 Codex 会话合并成“开发历程”；
+- 在 `~/.project-observer/` 保存项目事实变化的观察历史；
+- Self Monitor：Project Observer 自身与其他项目使用同一套规则。
 
 暂时没有：
-- LLM 项目理解；
-- Codex / Claude Session 导入；
-- 验证证据模型；
+- LLM 二次总结 AI 会话；
+- Claude / Cursor / 其他 Agent 适配；
+- “AI 声称完成”与客观验证证据模型；
 - 停止阶段自动恢复；
-- 项目健康 / 复杂度趋势；
+- 长期项目健康 / 复杂度趋势；
 - 桌面软件打包。
 
 ## 运行
@@ -37,25 +36,43 @@ npm start
 http://127.0.0.1:4177
 ```
 
-默认扫描 Project Observer 所在目录的父目录。也可以在页面输入其他根目录，例如：
+默认扫描 Project Observer 所在目录的父目录，也可以在页面填写其他项目根目录，例如：
 
 ```text
 D:\Projects
 ```
 
-## 自动恢复规则（v0.2）
+## Codex 数据
 
-v0.2 只做保守恢复：
+默认只读：
 
-1. `.project-state.json` 是最高优先级的显式状态；
-2. 缺少显式名称/摘要时，读取 README 和 `package.json`；
-3. 读取项目根目录常见状态文档和 `docs/` 下的 Markdown/TXT；
-4. Markdown 中的 `- [x]` / `- [ ]` 被视为明确完成/未完成清单；
-5. 没有证据时，不自动判断项目阶段，不生成“下一步工作”。
+```text
+~/.codex/sessions/**/*.jsonl
+```
+
+Project Observer 当前只提取 Session 元数据、工作目录、时间和首条有效用户需求，用来恢复开发历程；不会修改 Codex 文件，也不会上传这些内容。
+
+如 Codex Session 在其他目录，可以设置：
+
+```text
+CODEX_SESSIONS_DIR=D:\path\to\sessions
+```
+
+为了避免大型历史目录拖慢首次扫描，v0.3 默认只检查最近 250 个 Session 文件。可以通过 `PROJECT_OBSERVER_CODEX_MAX_SESSIONS` 调整。
+
+## 观察历史
+
+每次扫描会比较项目事实。只有事实发生变化时才追加记录，默认保存到：
+
+```text
+~/.project-observer/observations.jsonl
+```
+
+因此普通刷新不会不断生成重复快照。观察数据放在项目仓库之外，不会让被观察项目产生 Git 未提交改动。
 
 ## `.project-state.json`
 
-它用于声明“我们明确知道的事实”，后续自动分析会逐步补充它，而不是覆盖它。
+显式状态仍然优先于自动恢复：
 
 ```json
 {
@@ -72,6 +89,7 @@ v0.2 只做保守恢复：
 ## 设计原则
 
 - 不默认生成“下一步工作”；优先展示证据支持的事实和明确未完成项。
-- “AI 说完成”与“经过测试/用户体验验证”未来必须区分。
+- “AI 说完成”与“经过测试/用户体验验证”必须逐步分开。
 - 不给 Project Observer 自己写特殊规则；它必须能用同一套逻辑分析自身。
-- 先建立事实层，再逐层接文档理解、Agent Session、验证与长期项目健康模型。
+- 先建立可观察事实层，再逐步增加 AI 理解层。
+- 项目开发周期越长、规模越大，越需要保存状态演变，而不是只看当前代码。

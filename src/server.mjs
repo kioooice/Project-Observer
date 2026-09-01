@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverProjects } from './scanner.mjs';
+import { attachCodexSessions } from './codex.mjs';
+import { recordObservations, getProjectObservations, getObservationStoreInfo } from './observations.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
@@ -39,19 +41,45 @@ async function serveStatic(req, res) {
   }
 }
 
+async function scanWithActivity(root, depth, maxProjects = 80) {
+  const base = await discoverProjects(root, { maxDepth: depth, maxProjects });
+  const enriched = await attachCodexSessions(base.projects);
+  const observation = await recordObservations(enriched.projects);
+  return {
+    ...base,
+    projects: enriched.projects,
+    agentSources: enriched.meta,
+    observationStore: {
+      ...getObservationStoreInfo(),
+      writtenThisScan: observation.written
+    }
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${host}:${port}`);
+
     if (url.pathname === '/api/projects') {
       const root = url.searchParams.get('root') || path.dirname(projectRoot);
       const depth = Math.max(0, Math.min(4, Number(url.searchParams.get('depth') || 2)));
-      const data = await discoverProjects(root, { maxDepth: depth });
+      const data = await scanWithActivity(root, depth);
       return sendJson(res, 200, { ...data, selfPath: projectRoot });
     }
+
     if (url.pathname === '/api/self') {
-      const data = await discoverProjects(projectRoot, { maxDepth: 0, maxProjects: 1 });
+      const data = await scanWithActivity(projectRoot, 0, 1);
       return sendJson(res, 200, data.projects[0] || null);
     }
+
+    if (url.pathname === '/api/observations') {
+      const projectPath = url.searchParams.get('project');
+      if (!projectPath) return sendJson(res, 400, { error: 'Missing project path' });
+      const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 20)));
+      const observations = await getProjectObservations(projectPath, limit);
+      return sendJson(res, 200, { projectPath, observations, store: getObservationStoreInfo() });
+    }
+
     return await serveStatic(req, res);
   } catch (error) {
     return sendJson(res, 500, { error: error?.message || String(error) });
@@ -61,4 +89,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`Project Observer: http://${host}:${port}`);
   console.log(`Default scan root: ${path.dirname(projectRoot)}`);
+  console.log(`Observation store: ${getObservationStoreInfo().storeDir}`);
 });
