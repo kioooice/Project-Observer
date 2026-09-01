@@ -3,7 +3,7 @@
   "name": "Project Observer",
   "summary": "一个本地优先的多项目状态工作台，用来恢复项目现状、开发历程和验证证据，尤其适合 AI 辅助开发的软件项目。",
   "status": "active",
-  "stage": "v0.3 / AI 开发历程与持续观察",
+  "stage": "v0.3.1 / 项目身份与 Codex 归属",
   "startedAt": "2026-09-01",
   "goals": [
     { "id": "multi-project-scan", "title": "扫描并识别多个本地项目", "status": "done" },
@@ -12,6 +12,7 @@
     { "id": "self-monitor", "title": "从第一天开始监测 Project Observer 自身", "status": "done" },
     { "id": "document-recovery", "title": "从 README / docs / PLAN / TODO 等文档恢复项目信息和明确未完成项", "status": "done" },
     { "id": "codex-history", "title": "读取 Codex 本地 Session 并关联到对应项目", "status": "done" },
+    { "id": "project-identity", "title": "使用 Git remote、当前路径和历史路径建立稳定项目身份", "status": "done" },
     { "id": "observation-store", "title": "持续保存项目事实变化的本地观察历史", "status": "done" },
     { "id": "state-model", "title": "逐步形成通用的 Project State Model（项目状态模型）", "status": "in_progress" },
     { "id": "agent-history", "title": "扩展 Claude / 其他 AI Agent 的开发记录适配", "status": "planned" },
@@ -22,6 +23,7 @@
     "默认不替项目臆测下一步；只展示有证据支持的未完成事项。",
     "工具必须保持通用性，并且用与其他项目相同的规则分析自身。",
     "自动恢复结果必须标明来源，显式状态优先于推断。",
-    "AI 开发记录第一阶段只提取会话事实，不使用 LLM 二次总结。"
+    "AI 开发记录第一阶段只提取会话事实，不使用 LLM 二次总结。",
+    "Session ID 只标识会话；项目归属优先依据 Git remote，其次才是当前路径和历史路径。"
   ]
 }
