@@ -1,54 +1,54 @@
 {
   "schemaVersion": 1,
   "name": "Project Observer",
-  "summary": "A local-first multi-project dashboard that restores project state, development history, and verification evidence for AI-assisted software projects.",
+  "summary": "一个本地优先的多项目状态工作台，用来恢复项目现状、开发历程和验证证据，尤其适合 AI 辅助开发的软件项目。",
   "status": "active",
-  "stage": "MVP / self-monitoring",
+  "stage": "MVP / 自身监测",
   "startedAt": "2026-09-01",
   "goals": [
     {
       "id": "multi-project-scan",
-      "title": "Scan multiple local projects",
+      "title": "扫描并识别多个本地项目",
       "status": "done"
     },
     {
       "id": "git-state",
-      "title": "Read Git activity and working-tree state",
+      "title": "读取 Git 开发活动与工作区状态",
       "status": "done"
     },
     {
       "id": "project-dashboard",
-      "title": "Show project overview and per-project details",
+      "title": "展示多项目总览和单项目详情",
       "status": "done"
     },
     {
       "id": "self-monitor",
-      "title": "Observe Project Observer itself from day one",
+      "title": "从第一天开始监测 Project Observer 自身",
       "status": "done"
     },
     {
       "id": "state-model",
-      "title": "Evolve a general Project State Model",
+      "title": "逐步形成通用的 Project State Model（项目状态模型）",
       "status": "planned"
     },
     {
       "id": "agent-history",
-      "title": "Import Codex / Claude / other agent sessions",
+      "title": "导入 Codex / Claude / 其他 AI Agent 的开发记录",
       "status": "planned"
     },
     {
       "id": "verification",
-      "title": "Separate claimed completion from verified completion",
+      "title": "区分“AI 声称完成”和“已有证据验证完成”",
       "status": "planned"
     },
     {
       "id": "project-health",
-      "title": "Track long-term project complexity and maintainability signals",
+      "title": "跟踪长期项目的复杂度与可继续开发性",
       "status": "planned"
     }
   ],
   "notes": [
-    "Do not invent product next steps by default; only show evidence-backed unfinished items.",
-    "The tool must remain general-purpose and analyze itself using the same rules as other projects."
+    "默认不替项目臆测下一步；只展示有证据支持的未完成事项。",
+    "工具必须保持通用性，并且用与其他项目相同的规则分析自身。"
   ]
 }

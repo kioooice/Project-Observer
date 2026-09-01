@@ -10,6 +10,21 @@ const scanMessage = $('#scanMessage');
 let currentData = null;
 let selectedId = null;
 
+const statusLabels = {
+  active: '开发中',
+  paused: '已暂停',
+  completed: '已完成',
+  abandoned: '已停止',
+  done: '已完成',
+  planned: '待开发',
+  in_progress: '进行中',
+  blocked: '受阻'
+};
+
+function statusLabel(value) {
+  return statusLabels[value] || value || '未知';
+}
+
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c]));
 }
@@ -28,7 +43,7 @@ function renderMetrics(data) {
   const explicit = projects.filter(p => p.stateSource).length;
   metrics.innerHTML = [
     ['项目', projects.length],
-    ['Active', active],
+    ['开发中', active],
     ['有未提交改动', dirty],
     ['有显式状态文件', explicit]
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
@@ -49,7 +64,7 @@ function renderProjects(data) {
     btn.innerHTML = `
       <div class="card-top">
         <p class="project-name">${escapeHtml(p.name)}</p>
-        <span class="status">${escapeHtml(p.status)}</span>
+        <span class="status">${escapeHtml(statusLabel(p.status))}</span>
       </div>
       <div class="stage">${escapeHtml(p.stage || '尚未恢复当前阶段')}</div>
       <div class="card-meta">
@@ -68,26 +83,26 @@ function renderDetail(p) {
   const goals = p.goals || [];
   const commits = p.git?.recentCommits || [];
   detailPanel.innerHTML = `
-    <p class="eyebrow">PROJECT DETAIL</p>
+    <p class="eyebrow">项目详情</p>
     <h2 class="detail-title">${escapeHtml(p.name)}</h2>
     <div class="path">${escapeHtml(p.path)}</div>
     <p class="detail-summary">${escapeHtml(p.summary || '当前没有显式项目摘要；后续版本会从文档与历史中恢复。')}</p>
 
     <div class="detail-section">
-      <div class="card-top"><strong>${escapeHtml(p.stage || '阶段未知')}</strong><span class="status">${escapeHtml(p.status)}</span></div>
+      <div class="card-top"><strong>${escapeHtml(p.stage || '阶段未知')}</strong><span class="status">${escapeHtml(statusLabel(p.status))}</span></div>
       ${p.declaredProgress == null ? '' : `<div class="progressbar" aria-label="目标进度 ${p.declaredProgress}%"><span style="width:${p.declaredProgress}%"></span></div>`}
       <div class="muted" style="margin-top:8px">最近提交：${escapeHtml(p.git?.latestCommit?.subject || '无')} · ${compactDate(p.git?.latestCommit?.date)}</div>
     </div>
 
     <div class="detail-section">
-      <p class="eyebrow">DECLARED GOALS</p>
+      <p class="eyebrow">当前目标</p>
       <div class="goal-list">
-        ${goals.length ? goals.map(g => `<div class="goal"><span class="goal-bullet ${escapeHtml(g.status)}"></span><div>${escapeHtml(g.title)}<small>${escapeHtml(g.status)}</small></div></div>`).join('') : '<div class="muted">没有显式目标。</div>'}
+        ${goals.length ? goals.map(g => `<div class="goal"><span class="goal-bullet ${escapeHtml(g.status)}"></span><div>${escapeHtml(g.title)}<small>${escapeHtml(statusLabel(g.status))}</small></div></div>`).join('') : '<div class="muted">没有显式目标。</div>'}
       </div>
     </div>
 
     <div class="detail-section">
-      <p class="eyebrow">RECENT GIT HISTORY</p>
+      <p class="eyebrow">近期 Git 开发记录</p>
       <div class="commit-list">
         ${commits.length ? commits.slice(0,6).map(c => `<div class="commit"><code>${escapeHtml(c.shortHash)}</code><div>${escapeHtml(c.subject)}<small>${compactDate(c.date)}</small></div></div>`).join('') : '<div class="muted">没有可读取的 Git 历史。</div>'}
       </div>

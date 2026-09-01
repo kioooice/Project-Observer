@@ -1,8 +1,8 @@
 {
   "name": "project-observer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "Local-first multi-project state dashboard for AI-assisted development.",
+  "description": "本地优先的多项目状态工作台，面向 AI 辅助开发的项目记忆、状态与验证观察。",
   "type": "module",
   "scripts": {
     "start": "node src/server.mjs",
