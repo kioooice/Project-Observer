@@ -3,8 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverProjects } from './scanner.mjs';
+import { attachProjectIdentities } from './identity.mjs';
 import { attachCodexSessions } from './codex.mjs';
-import { recordObservations, getProjectObservations, getObservationStoreInfo } from './observations.mjs';
+import { attachKnownPathAliases, recordObservations, getProjectObservations, getObservationStoreInfo } from './observations.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
@@ -43,6 +44,8 @@ async function serveStatic(req, res) {
 
 async function scanWithActivity(root, depth, maxProjects = 80) {
   const base = await discoverProjects(root, { maxDepth: depth, maxProjects });
+  await attachProjectIdentities(base.projects);
+  await attachKnownPathAliases(base.projects);
   const enriched = await attachCodexSessions(base.projects);
   const observation = await recordObservations(enriched.projects);
   return {
@@ -74,10 +77,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/observations') {
       const projectPath = url.searchParams.get('project');
+      const projectKey = url.searchParams.get('key');
       if (!projectPath) return sendJson(res, 400, { error: 'Missing project path' });
       const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 20)));
-      const observations = await getProjectObservations(projectPath, limit);
-      return sendJson(res, 200, { projectPath, observations, store: getObservationStoreInfo() });
+      const observations = await getProjectObservations(projectPath, limit, projectKey);
+      return sendJson(res, 200, { projectPath, projectKey, observations, store: getObservationStoreInfo() });
     }
 
     return await serveStatic(req, res);
