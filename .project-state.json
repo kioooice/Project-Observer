@@ -3,7 +3,7 @@
   "name": "Project Observer",
   "summary": "一个本地优先的多项目状态工作台，用来恢复项目现状、开发历程和验证证据，尤其适合 AI 辅助开发的软件项目。",
   "status": "active",
-  "stage": "MVP / 自身监测",
+  "stage": "v0.2 / 状态恢复",
   "startedAt": "2026-09-01",
   "goals": [
     {
@@ -27,9 +27,14 @@
       "status": "done"
     },
     {
+      "id": "document-recovery",
+      "title": "从 README / docs / PLAN / TODO 等文档恢复项目信息和明确未完成项",
+      "status": "done"
+    },
+    {
       "id": "state-model",
       "title": "逐步形成通用的 Project State Model（项目状态模型）",
-      "status": "planned"
+      "status": "in_progress"
     },
     {
       "id": "agent-history",
@@ -49,6 +54,7 @@
   ],
   "notes": [
     "默认不替项目臆测下一步；只展示有证据支持的未完成事项。",
-    "工具必须保持通用性，并且用与其他项目相同的规则分析自身。"
+    "工具必须保持通用性，并且用与其他项目相同的规则分析自身。",
+    "自动恢复结果必须标明来源，显式状态优先于推断。"
   ]
 }
