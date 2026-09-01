@@ -3,21 +3,10 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { isInsidePath, normalizeFsPath, normalizeGitRemote } from './identity.mjs';
 
 const DEFAULT_BASE = path.join(os.homedir(), '.codex', 'sessions');
 const MAX_FILES = Math.max(20, Math.min(1000, Number(process.env.PROJECT_OBSERVER_CODEX_MAX_SESSIONS || 250)));
-
-function normalizeFsPath(value) {
-  if (!value) return '';
-  const resolved = path.resolve(value);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-}
-
-function isInside(candidate, root) {
-  if (!candidate || !root) return false;
-  if (candidate === root) return true;
-  return candidate.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`);
-}
 
 function cleanPrompt(value) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -41,6 +30,20 @@ function extractText(content, acceptedTypes) {
     .map(item => String(item.text || item.content || ''))
     .join('\n')
     .trim();
+}
+
+function parseGitInfo(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const originUrl = raw.repository_url || raw.origin_url || raw.originUrl || raw.repositoryUrl || null;
+  const sha = raw.commit_hash || raw.sha || raw.commitHash || null;
+  const branch = raw.branch || null;
+  if (!originUrl && !sha && !branch) return null;
+  return {
+    originUrl,
+    remoteKey: normalizeGitRemote(originUrl),
+    sha,
+    branch
+  };
 }
 
 async function listRecentJsonl(basePath) {
@@ -93,11 +96,15 @@ async function parseSession(file) {
       }
 
       if (line.type === 'session_meta' && line.payload) {
+        const payload = line.payload;
+        const rawMeta = payload.meta && typeof payload.meta === 'object' ? payload.meta : payload;
+        const rawGit = payload.git || rawMeta.git || rawMeta.git_info || rawMeta.gitInfo || null;
         meta = {
-          id: line.payload.id || path.basename(file.path, '.jsonl'),
-          cwd: line.payload.cwd || null,
-          timestamp: line.payload.timestamp || line.timestamp || null,
-          modelProvider: line.payload.model_provider || null
+          id: rawMeta.id || path.basename(file.path, '.jsonl'),
+          cwd: rawMeta.cwd || null,
+          timestamp: rawMeta.timestamp || line.timestamp || null,
+          modelProvider: rawMeta.model_provider || rawMeta.modelProvider || null,
+          git: parseGitInfo(rawGit)
         };
         continue;
       }
@@ -142,19 +149,68 @@ async function parseSession(file) {
     lastActivity: lastActivity || startedAt,
     title: firstPrompt || 'Codex 会话（未恢复首条需求）',
     userTurns,
-    modelProvider: meta.modelProvider
+    modelProvider: meta.modelProvider,
+    git: meta.git
   };
 }
 
-function matchProject(sessionPath, projects) {
+function bestPathMatch(sessionPath, projects, useAliases = false) {
   const candidate = normalizeFsPath(sessionPath);
   let best = null;
+
   for (const project of projects) {
-    const root = normalizeFsPath(project.path);
-    if (!isInside(candidate, root)) continue;
-    if (!best || root.length > best.root.length) best = { project, root };
+    const roots = useAliases
+      ? (project.identity?.pathAliases || [])
+      : [normalizeFsPath(project.path)];
+
+    for (const root of roots) {
+      if (!isInsidePath(candidate, root)) continue;
+      if (!best || root.length > best.root.length) best = { project, root };
+    }
   }
+
   return best?.project || null;
+}
+
+function matchProject(session, projects) {
+  const sessionRemoteKey = session.git?.remoteKey || null;
+
+  if (sessionRemoteKey) {
+    const remoteMatches = projects.filter(project => project.identity?.remoteKey === sessionRemoteKey);
+    if (remoteMatches.length === 1) {
+      return {
+        project: remoteMatches[0],
+        match: { type: 'git_remote', confidence: 'high', reason: 'Git remote 一致' }
+      };
+    }
+    if (remoteMatches.length > 1) {
+      const byCurrentPath = bestPathMatch(session.projectPath, remoteMatches, false);
+      if (byCurrentPath) {
+        return {
+          project: byCurrentPath,
+          match: { type: 'git_remote_and_path', confidence: 'high', reason: 'Git remote + 当前路径一致' }
+        };
+      }
+    }
+  }
+
+  const currentPath = bestPathMatch(session.projectPath, projects, false);
+  if (currentPath) {
+    return {
+      project: currentPath,
+      match: { type: 'current_path', confidence: 'high', reason: 'Codex 工作目录属于当前项目' }
+    };
+  }
+
+  const historicalPath = bestPathMatch(session.projectPath, projects, true);
+  if (historicalPath) {
+    return {
+      project: historicalPath,
+      match: { type: 'historical_path', confidence: 'medium', reason: '命中项目历史路径别名' }
+    };
+  }
+
+  return null;
 }
 
 export async function attachCodexSessions(projects) {
@@ -175,21 +231,43 @@ export async function attachCodexSessions(projects) {
   }
 
   if (!accessible || !projects.length) {
-    return { projects, meta: { codex: { available: accessible, sourcePath: basePath, scannedFiles: 0, matchedSessions: 0 } } };
+    return {
+      projects,
+      meta: {
+        codex: {
+          available: accessible,
+          sourcePath: basePath,
+          scannedFiles: 0,
+          matchedSessions: 0,
+          unmatchedSessions: 0,
+          matchMethods: {}
+        }
+      }
+    };
   }
 
   const files = await listRecentJsonl(basePath);
   let matchedSessions = 0;
+  let parsedSessions = 0;
+  const matchMethods = {};
 
   for (const file of files) {
     const session = await parseSession(file);
     if (!session) continue;
-    const project = matchProject(session.projectPath, projects);
-    if (!project) continue;
+    parsedSessions += 1;
+    const result = matchProject(session, projects);
+    if (!result) continue;
 
     matchedSessions += 1;
-    const bucket = project.agentSessions.codex;
-    bucket.sessions.push(session);
+    matchMethods[result.match.type] = (matchMethods[result.match.type] || 0) + 1;
+    const bucket = result.project.agentSessions.codex;
+    bucket.sessions.push({
+      ...session,
+      match: {
+        ...result.match,
+        projectKey: result.project.identity?.key || null
+      }
+    });
   }
 
   for (const project of projects) {
@@ -207,7 +285,10 @@ export async function attachCodexSessions(projects) {
         available: true,
         sourcePath: basePath,
         scannedFiles: files.length,
-        matchedSessions
+        parsedSessions,
+        matchedSessions,
+        unmatchedSessions: Math.max(0, parsedSessions - matchedSessions),
+        matchMethods
       }
     }
   };
