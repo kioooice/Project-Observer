@@ -88,6 +88,7 @@ function renderProjects(data) {
 function sourceChips(p) {
   const sources = [...(p.recovery?.sources || [])];
   if (p.agentSessions?.codex?.sessionCount) sources.push({ label: `Codex 会话 (${p.agentSessions.codex.sessionCount})` });
+  if (p.identity?.remoteKey) sources.push({ label: 'Git remote 身份' });
   if (!sources.length) return '<span class="muted">暂无可用来源</span>';
   return sources.map(source => `<span class="status">${escapeHtml(source.label)}</span>`).join('');
 }
@@ -107,7 +108,7 @@ function buildDevelopmentTimeline(p) {
   }));
   const codexEvents = (p.agentSessions?.codex?.sessions || []).map(s => ({
     type: 'Codex', date: s.lastActivity || s.startedAt, title: s.title,
-    meta: `${s.userTurns || 0} 次有效用户输入`
+    meta: `${s.userTurns || 0} 次有效用户输入 · ${s.match?.reason || '归属方式未知'}`
   }));
   return [...gitEvents, ...codexEvents]
     .filter(item => item.date)
@@ -115,11 +116,23 @@ function buildDevelopmentTimeline(p) {
     .slice(0, 16);
 }
 
+function codexMatchSummary(codex) {
+  const sessions = codex?.sessions || [];
+  if (!sessions.length) return '';
+  const counts = {};
+  for (const session of sessions) {
+    const reason = session.match?.reason || '归属方式未知';
+    counts[reason] = (counts[reason] || 0) + 1;
+  }
+  return Object.entries(counts).map(([reason, count]) => `${reason} ${count}`).join(' · ');
+}
+
 function renderTimeline(p) {
   const items = buildDevelopmentTimeline(p);
   const codex = p.agentSessions?.codex;
+  const matchSummary = codexMatchSummary(codex);
   const sourceNote = codex?.available
-    ? `Codex 来源：${escapeHtml(codex.sourcePath)} · 当前项目匹配 ${codex.sessionCount || 0} 个会话`
+    ? `Codex 来源：${escapeHtml(codex.sourcePath)} · 当前项目匹配 ${codex.sessionCount || 0} 个会话${matchSummary ? ` · ${escapeHtml(matchSummary)}` : ''}`
     : `未发现 Codex 本地会话目录：${escapeHtml(codex?.sourcePath || '~/.codex/sessions')}`;
 
   return `
@@ -131,6 +144,18 @@ function renderTimeline(p) {
           <div><strong>${escapeHtml(item.title)}</strong><small>${compactDate(item.date, true)} · ${escapeHtml(item.meta)}</small></div>
         </div>`).join('') : '<div class="muted">目前没有可合并的 Git / Codex 开发记录。</div>'}
     </div>`;
+}
+
+function renderIdentity(p) {
+  const identity = p.identity;
+  if (!identity) return '';
+  const source = identity.source === 'git_remote' ? 'Git remote' : (identity.source === 'explicit' ? '显式项目身份' : '当前路径');
+  const aliasCount = identity.pathAliases?.length || 0;
+  return `
+    <div class="muted" style="margin-top:8px">项目身份来源：${escapeHtml(source)}</div>
+    ${p.git?.originUrl ? `<div class="muted" style="margin-top:4px">Git remote：${escapeHtml(p.git.originUrl)}</div>` : ''}
+    <div class="muted" style="margin-top:4px">身份键：${escapeHtml(identity.key)}${aliasCount ? ` · 已保留 ${aliasCount} 个历史路径` : ''}</div>
+  `;
 }
 
 function renderDetail(p) {
@@ -145,6 +170,7 @@ function renderDetail(p) {
     <div class="path">${escapeHtml(p.path)}</div>
     <p class="detail-summary">${escapeHtml(p.summary || '当前没有可恢复的项目摘要。')}</p>
     ${p.summarySource ? `<div class="muted">摘要来源：${escapeHtml(p.summarySource)}</div>` : ''}
+    ${renderIdentity(p)}
 
     <div class="detail-section">
       <div class="card-top"><strong>${escapeHtml(p.stage || '阶段尚未恢复')}</strong><span class="status">${escapeHtml(statusLabel(p.status))}</span></div>
@@ -191,6 +217,7 @@ async function loadObservationHistory(p, token) {
   if (!target) return;
   try {
     const params = new URLSearchParams({ project: p.path, limit: '12' });
+    if (p.identity?.key) params.set('key', p.identity.key);
     const res = await fetch(`/api/observations?${params}`);
     const data = await res.json();
     if (token !== detailRequestToken || p.id !== selectedId) return;
@@ -245,7 +272,7 @@ async function scan({ preserveInput = true } = {}) {
     scanMeta.textContent = `${data.projects.length} 个项目 · ${new Date(data.scannedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
     const codex = data.agentSources?.codex;
     scanMessage.textContent = codex?.available
-      ? `扫描完成 · 已检查 ${codex.scannedFiles || 0} 个近期 Codex 会话文件`
+      ? `扫描完成 · 已检查 ${codex.scannedFiles || 0} 个近期 Codex 会话文件 · 匹配 ${codex.matchedSessions || 0}`
       : '扫描完成 · 未发现 Codex 本地会话目录';
   } catch (error) {
     scanMessage.textContent = error.message;
