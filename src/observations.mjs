@@ -2,20 +2,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { normalizeFsPath } from './identity.mjs';
 
 const storeDir = path.resolve(process.env.PROJECT_OBSERVER_HOME || path.join(os.homedir(), '.project-observer'));
 const logFile = path.join(storeDir, 'observations.jsonl');
 const stateFile = path.join(storeDir, 'last-observations.json');
 
-function normalizeFsPath(value) {
-  if (!value) return '';
-  const resolved = path.resolve(value);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-}
-
 function makeSnapshot(project) {
   const codex = project.agentSessions?.codex || {};
   return {
+    identityKey: project.identity?.key || null,
+    remoteKey: project.identity?.remoteKey || null,
     path: project.path,
     name: project.name,
     status: project.status || null,
@@ -27,7 +24,8 @@ function makeSnapshot(project) {
       branch: project.git?.branch || null,
       dirtyFiles: project.git?.dirtyFiles || 0,
       latestCommitHash: project.git?.recentCommits?.[0]?.hash || null,
-      latestCommitDate: project.git?.latestCommit?.date || null
+      latestCommitDate: project.git?.latestCommit?.date || null,
+      originUrl: project.git?.originUrl || null
     },
     codex: {
       sessionCount: codex.sessionCount || 0,
@@ -43,6 +41,8 @@ function signature(snapshot) {
 function diffLabels(previous, current) {
   if (!previous) return ['首次观察'];
   const changes = [];
+  if (previous.identityKey !== current.identityKey) changes.push('项目身份建立');
+  if (normalizeFsPath(previous.path) !== normalizeFsPath(current.path)) changes.push('项目路径变化');
   if (previous.status !== current.status) changes.push('项目状态变化');
   if (previous.stage !== current.stage) changes.push('开发阶段变化');
   if (previous.declaredProgress !== current.declaredProgress) changes.push('目标进度变化');
@@ -66,6 +66,28 @@ async function readState() {
   }
 }
 
+export async function attachKnownPathAliases(projects) {
+  const state = await readState();
+  const entries = Object.values(state || {});
+
+  for (const project of projects) {
+    if (!project.identity) continue;
+    const aliases = new Set((project.identity.pathAliases || []).map(normalizeFsPath).filter(Boolean));
+    const current = normalizeFsPath(project.path);
+
+    for (const entry of entries) {
+      const snapshot = entry?.snapshot;
+      if (!snapshot?.identityKey || snapshot.identityKey !== project.identity.key) continue;
+      const prior = normalizeFsPath(snapshot.path);
+      if (prior && prior !== current) aliases.add(prior);
+    }
+
+    project.identity.pathAliases = [...aliases];
+  }
+
+  return projects;
+}
+
 export async function recordObservations(projects) {
   await ensureStore();
   const state = await readState();
@@ -74,19 +96,31 @@ export async function recordObservations(projects) {
 
   for (const project of projects) {
     const snapshot = makeSnapshot(project);
-    const key = normalizeFsPath(project.path);
+    const identityKey = project.identity?.key || null;
+    const stableKey = identityKey ? `identity:${identityKey}` : `path:${normalizeFsPath(project.path)}`;
+    const legacyKey = normalizeFsPath(project.path);
+    const previousEntry = state[stableKey] || state[legacyKey] || null;
     const nextSignature = signature(snapshot);
-    const previousEntry = state[key] || null;
-    if (previousEntry?.signature === nextSignature) continue;
+
+    if (previousEntry?.signature === nextSignature) {
+      if (stableKey !== legacyKey && state[legacyKey] && !state[stableKey]) {
+        state[stableKey] = state[legacyKey];
+        delete state[legacyKey];
+        await fs.writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+      }
+      continue;
+    }
 
     lines.push(JSON.stringify({
       observedAt: now,
+      projectKey: identityKey,
       projectPath: project.path,
       changes: diffLabels(previousEntry?.snapshot || null, snapshot),
       snapshot
     }));
 
-    state[key] = { signature: nextSignature, snapshot, observedAt: now };
+    state[stableKey] = { signature: nextSignature, snapshot, observedAt: now };
+    if (stableKey !== legacyKey && state[legacyKey]) delete state[legacyKey];
   }
 
   if (lines.length) {
@@ -97,7 +131,7 @@ export async function recordObservations(projects) {
   return { written: lines.length, storeDir, logFile };
 }
 
-export async function getProjectObservations(projectPath, limit = 20) {
+export async function getProjectObservations(projectPath, limit = 20, projectKey = null) {
   const normalized = normalizeFsPath(projectPath);
   const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
   let raw;
@@ -112,7 +146,9 @@ export async function getProjectObservations(projectPath, limit = 20) {
     if (!line.trim()) continue;
     try {
       const item = JSON.parse(line);
-      if (normalizeFsPath(item.projectPath) === normalized) results.push(item);
+      const sameIdentity = projectKey && item.projectKey && item.projectKey === projectKey;
+      const sameCurrentPath = normalizeFsPath(item.projectPath) === normalized;
+      if (sameIdentity || sameCurrentPath) results.push(item);
     } catch {}
   }
 
