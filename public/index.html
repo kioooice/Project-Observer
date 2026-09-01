@@ -5,40 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Project Observer</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/light-shell.css" />
 </head>
 <body>
   <main class="shell">
-    <header class="hero" id="homeHero">
-      <div>
+    <header class="hero home-commandbar" id="homeHero">
+      <div class="brand-block">
         <p class="eyebrow">本地优先 · 项目状态</p>
         <h1>Project Observer</h1>
         <p class="subtitle">先看清项目现在是什么，再决定要不要继续开发。</p>
       </div>
-      <div class="hero-badge"><span class="dot"></span><span>已启用自身监测</span></div>
+
+      <section class="metrics header-metrics" id="metrics"></section>
+
+      <div class="header-actions">
+        <button id="scanBtn" type="button">扫描项目</button>
+        <div class="self-monitor"><span class="dot"></span><span>自身监测</span></div>
+        <div id="scanMessage" class="message" aria-live="polite"></div>
+      </div>
     </header>
 
-    <section class="toolbar panel" id="toolbar">
-      <label>
-        <span>扫描根目录</span>
-        <input id="rootInput" placeholder="例如 D:\\Projects" />
-      </label>
-      <label class="depth-label">
-        <span>扫描深度</span>
-        <select id="depthSelect">
-          <option value="1">1</option>
-          <option value="2" selected>2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-        </select>
-      </label>
-      <button id="scanBtn" type="button">扫描项目</button>
-      <div id="scanMessage" class="message" aria-live="polite"></div>
+    <section class="scan-config" id="toolbar" hidden aria-hidden="true">
+      <input id="rootInput" />
+      <select id="depthSelect">
+        <option value="2" selected>2</option>
+      </select>
     </section>
 
-    <section class="metrics" id="metrics"></section>
-
     <section id="homeView">
-      <div class="section-heading">
+      <div class="section-heading home-section-heading">
         <div>
           <p class="eyebrow">项目</p>
           <h2>项目总览</h2>
@@ -51,5 +46,6 @@
     <section id="projectView" class="project-view" hidden></section>
   </main>
   <script src="/app.js" type="module"></script>
+  <script src="/ui-shell.js" type="module"></script>
 </body>
 </html>
