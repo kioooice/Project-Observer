@@ -5,6 +5,12 @@
   "status": "active",
   "stage": "v0.3.4 / Codex 项目根目录归属",
   "startedAt": "2026-09-01",
+  "identity": {
+    "projectKey": "git:github.com/kioooice/project-observer",
+    "pathAliases": [
+      "D:\\360Downloads\\github\\Project State Model"
+    ]
+  },
   "goals": [
     { "id": "multi-project-scan", "title": "扫描并识别多个本地项目", "status": "done" },
     { "id": "git-state", "title": "读取 Git 开发活动与工作区状态", "status": "done" },

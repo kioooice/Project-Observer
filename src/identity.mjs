@@ -7,7 +7,12 @@ const execFileAsync = promisify(execFile);
 
 export function normalizeFsPath(value) {
   if (!value) return '';
-  const resolved = path.resolve(value);
+  let target = String(value);
+  if (process.platform === 'win32') {
+    if (target.startsWith('\\\\?\\')) target = target.slice(4);
+    if (target.toUpperCase().startsWith('UNC\\')) target = `\\\\${target.slice(4)}`;
+  }
+  const resolved = path.resolve(target);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 

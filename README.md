@@ -86,6 +86,17 @@ CODEX_SESSIONS_DIR=D:\path\to\sessions
 }
 ```
 
+如果 Codex 会话不是在仓库根目录启动（例如在外层工作区目录启动），可以在同一个文件的 `identity.pathAliases` 里登记该目录，让会话归属仍能命中当前项目：
+
+```json
+{
+  "identity": {
+    "projectKey": "git:github.com/kioooice/project-observer",
+    "pathAliases": ["D:\\Projects\\Project State Model"]
+  }
+}
+```
+
 ## 设计原则
 
 - 不默认生成“下一步工作”；优先展示证据支持的事实和明确未完成项。
