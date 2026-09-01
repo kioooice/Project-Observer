@@ -8,7 +8,7 @@
 </head>
 <body>
   <main class="shell">
-    <header class="hero">
+    <header class="hero" id="homeHero">
       <div>
         <p class="eyebrow">本地优先 · 项目状态</p>
         <h1>Project Observer</h1>
@@ -17,7 +17,7 @@
       <div class="hero-badge"><span class="dot"></span><span>已启用自身监测</span></div>
     </header>
 
-    <section class="toolbar panel">
+    <section class="toolbar panel" id="toolbar">
       <label>
         <span>扫描根目录</span>
         <input id="rootInput" placeholder="例如 D:\\Projects" />
@@ -37,26 +37,18 @@
 
     <section class="metrics" id="metrics"></section>
 
-    <section class="workspace">
-      <div>
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">项目</p>
-            <h2>项目总览</h2>
-          </div>
-          <span id="scanMeta" class="muted"></span>
+    <section id="homeView">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">项目</p>
+          <h2>项目总览</h2>
         </div>
-        <div id="projectGrid" class="project-grid"></div>
+        <span id="scanMeta" class="muted"></span>
       </div>
-
-      <aside id="detailPanel" class="detail panel" aria-live="polite">
-        <div class="empty-detail">
-          <p class="eyebrow">项目详情</p>
-          <h2>选择一个项目</h2>
-          <p>查看当前阶段、目标、Git 活动与明确的状态证据。</p>
-        </div>
-      </aside>
+      <div id="projectGrid" class="project-grid"></div>
     </section>
+
+    <section id="projectView" class="project-view" hidden></section>
   </main>
   <script src="/app.js" type="module"></script>
 </body>
