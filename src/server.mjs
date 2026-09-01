@@ -18,6 +18,12 @@ import {
   removeSessionBinding,
   getSessionBindingStoreInfo
 } from './session-bindings.mjs';
+import {
+  listRegisteredProjects,
+  addRegisteredProject,
+  removeRegisteredProject,
+  getProjectRegistryInfo
+} from './project-registry.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
@@ -69,16 +75,14 @@ async function serveStatic(req, res) {
   }
 }
 
-async function scanWithActivity(root, depth, maxProjects = 80) {
-  const base = await discoverProjects(root, { maxDepth: depth, maxProjects });
-  await attachGitContext(base.projects);
-  await attachProjectIdentities(base.projects);
-  await attachKnownPathAliases(base.projects);
-  const enriched = await attachCodexSessions(base.projects);
+async function enrichProjects(projects) {
+  await attachGitContext(projects);
+  await attachProjectIdentities(projects);
+  await attachKnownPathAliases(projects);
+  const enriched = await attachCodexSessions(projects);
   attachProjectInsights(enriched.projects);
   const observation = await recordObservations(enriched.projects);
   return {
-    ...base,
     projects: enriched.projects,
     agentSources: enriched.meta,
     observationStore: {
@@ -89,15 +93,84 @@ async function scanWithActivity(root, depth, maxProjects = 80) {
   };
 }
 
+async function scanWithActivity(root, depth, maxProjects = 80) {
+  const base = await discoverProjects(root, { maxDepth: depth, maxProjects });
+  const enriched = await enrichProjects(base.projects);
+  return {
+    ...base,
+    ...enriched
+  };
+}
+
+async function loadProjectLibrary() {
+  const registry = await listRegisteredProjects(projectRoot);
+  const projects = [];
+  const unavailable = [];
+
+  for (const entry of registry.projects) {
+    try {
+      const base = await discoverProjects(entry.path, { maxDepth: 0, maxProjects: 1 });
+      if (base.projects[0]) {
+        projects.push(base.projects[0]);
+      } else {
+        unavailable.push({ path: entry.path, reason: '目录存在，但当前没有识别到 Git 仓库或项目状态文件' });
+      }
+    } catch (error) {
+      unavailable.push({ path: entry.path, reason: error?.message || String(error) });
+    }
+  }
+
+  const enriched = await enrichProjects(projects);
+  return {
+    root: '',
+    scannedAt: new Date().toISOString(),
+    ...enriched,
+    library: {
+      ...getProjectRegistryInfo(),
+      registeredCount: registry.projects.length,
+      registeredProjects: registry.projects,
+      unavailable
+    }
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${host}:${port}`);
 
     if (url.pathname === '/api/projects' && req.method === 'GET') {
-      const root = url.searchParams.get('root') || path.dirname(projectRoot);
-      const depth = Math.max(0, Math.min(4, Number(url.searchParams.get('depth') || 2)));
-      const data = await scanWithActivity(root, depth);
-      return sendJson(res, 200, { ...data, selfPath: projectRoot });
+      const legacyRoot = url.searchParams.get('root');
+      if (legacyRoot) {
+        const depth = Math.max(0, Math.min(4, Number(url.searchParams.get('depth') || 2)));
+        const data = await scanWithActivity(legacyRoot, depth);
+        return sendJson(res, 200, { ...data, selfPath: projectRoot, mode: 'temporary_scan' });
+      }
+      const data = await loadProjectLibrary();
+      return sendJson(res, 200, { ...data, selfPath: projectRoot, mode: 'project_library' });
+    }
+
+    if (url.pathname === '/api/project-library' && req.method === 'GET') {
+      const registry = await listRegisteredProjects(projectRoot);
+      return sendJson(res, 200, {
+        projects: registry.projects,
+        store: getProjectRegistryInfo()
+      });
+    }
+
+    if (url.pathname === '/api/project-library' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const project = await addRegisteredProject(body.path, projectRoot);
+      return sendJson(res, 200, {
+        ok: true,
+        project,
+        store: getProjectRegistryInfo()
+      });
+    }
+
+    if (url.pathname === '/api/project-library' && req.method === 'DELETE') {
+      const projectPath = url.searchParams.get('path');
+      const removed = await removeRegisteredProject(projectPath, projectRoot);
+      return sendJson(res, 200, { ok: true, removed });
     }
 
     if (url.pathname === '/api/self' && req.method === 'GET') {
@@ -137,9 +210,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, host, () => {
+server.listen(port, host, async () => {
+  await listRegisteredProjects(projectRoot);
   console.log(`Project Observer: http://${host}:${port}`);
-  console.log(`Default scan root: ${path.dirname(projectRoot)}`);
+  console.log(`Project library: ${getProjectRegistryInfo().registryFile}`);
   console.log(`Observation store: ${getObservationStoreInfo().storeDir}`);
   console.log(`Session bindings: ${getSessionBindingStoreInfo().bindingFile}`);
 });
