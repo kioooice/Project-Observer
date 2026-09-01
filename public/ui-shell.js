@@ -34,6 +34,7 @@ if (scanBtn) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || '添加失败');
       if (scanMessage) scanMessage.textContent = '已加入项目库，正在刷新…';
+      cachedData = null;
       await refreshProjectLibrary();
     } catch (error) {
       if (scanMessage) scanMessage.textContent = `添加失败：${error.message}`;
@@ -48,6 +49,22 @@ let cachedAt = 0;
 let cachedData = null;
 let requestToken = 0;
 
+const memoryTypeLabels = {
+  decision: '关键决策',
+  failure: '失败 / 问题经验',
+  constraint: '长期约束',
+  milestone: '里程碑',
+  issue: '未解决事项'
+};
+
+const memoryValidityLabels = {
+  active: '当前有效',
+  open: '仍未解决',
+  resolved: '已解决',
+  achieved: '已达成',
+  unknown: '有效性待确认'
+};
+
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -60,6 +77,10 @@ function routeInfo() {
     projectId: params.get('project'),
     tab: params.get('tab') || 'overview'
   };
+}
+
+function setProjectTab(projectId, tab) {
+  location.hash = `project=${encodeURIComponent(projectId)}&tab=${encodeURIComponent(tab)}`;
 }
 
 function formatDate(value) {
@@ -81,7 +102,7 @@ async function loadProjectsFromLibrary() {
 
   const response = await fetch('/api/projects');
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || '项目演进读取失败');
+  if (!response.ok) throw new Error(data.error || '项目状态读取失败');
 
   cachedAt = now;
   cachedData = data;
@@ -173,6 +194,91 @@ function evolutionMarkup(project) {
   `;
 }
 
+function memoryCardMarkup(item) {
+  const validity = memoryValidityLabels[item.validity] || item.validity || '状态未知';
+  const when = item.eventAt || item.lastConfirmedAt || item.firstSeenAt;
+  const evidenceItems = (item.evidence || []).slice(0, 6);
+  return `
+    <article class="memory-card${item.currentEvidence === false ? ' historical' : ''}">
+      <div class="memory-card-head">
+        <h3>${escapeHtml(item.title || '未命名记忆')}</h3>
+        <span class="memory-validity ${escapeHtml(item.validity || 'unknown')}">${escapeHtml(validity)}</span>
+      </div>
+      ${item.detail ? `<p class="memory-detail">${escapeHtml(item.detail)}</p>` : ''}
+      <div class="memory-meta">
+        <span>${item.currentEvidence === false ? '当前来源已不再出现' : '当前仍有来源支持'}</span>
+        <span>${escapeHtml(formatDate(when))}</span>
+        <span>${item.confidence === 'high' ? '高可信' : '中等可信'}</span>
+      </div>
+      ${evidenceItems.length ? `<details class="memory-evidence"><summary>查看 ${evidenceItems.length} 条证据</summary><div class="memory-evidence-list">${evidenceItems.map(ev => `<div class="memory-evidence-item"><b>${escapeHtml(ev.source || ev.kind || '来源')}</b>${ev.excerpt ? `<p>${escapeHtml(ev.excerpt)}</p>` : ''}${ev.ref ? `<code>${escapeHtml(ev.ref)}</code>` : ''}</div>`).join('')}</div></details>` : ''}
+    </article>
+  `;
+}
+
+function memoryPageMarkup(project) {
+  const memory = project.memory || {};
+  const items = memory.items || [];
+  const counts = memory.counts || {};
+  const order = ['decision', 'failure', 'constraint', 'milestone', 'issue'];
+
+  if (!items.length) {
+    return `
+      <div data-project-memory-page>
+        <section class="panel page-section">
+          <p class="eyebrow">项目记忆</p>
+          <h2>还没有形成可保存的长期记忆</h2>
+          <p class="muted">Project Observer 只保存有明确来源的决策、问题经验、约束、里程碑和未解决事项；没有证据时不会补写。</p>
+        </section>
+      </div>
+    `;
+  }
+
+  return `
+    <div data-project-memory-page>
+      <section class="panel page-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Project Memory</p>
+            <h2>跨会话保留下来的项目长期记忆</h2>
+          </div>
+          <span class="muted">${items.length} 条记忆 · ${escapeHtml(formatDate(memory.updatedAt))} 更新</span>
+        </div>
+        <div class="memory-summary">
+          ${order.map(type => `<div><strong>${counts[type] || 0}</strong><span>${escapeHtml(memoryTypeLabels[type])}</span></div>`).join('')}
+        </div>
+        <p class="muted">记忆会持久保存。当前证据消失后不会立即删除，而是把仍需确认的决策、约束和问题标成“有效性待确认”。</p>
+      </section>
+      <div class="memory-groups">
+        ${order.map(type => {
+          const group = items.filter(item => item.type === type);
+          if (!group.length) return '';
+          return `<section class="panel memory-group"><div class="memory-group-head"><div><p class="eyebrow">${escapeHtml(memoryTypeLabels[type])}</p><h2>${escapeHtml(type === 'decision' ? '为什么项目会这样做' : type === 'failure' ? '已经踩过哪些坑' : type === 'constraint' ? '哪些边界长期有效' : type === 'milestone' ? '哪些能力已经真正形成' : '哪些事情仍没有解决')}</h2></div><strong class="memory-count">${group.length}</strong></div><div class="memory-list">${group.map(memoryCardMarkup).join('')}</div></section>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function ensureMemoryTab(project) {
+  const tabs = projectView?.querySelector('.tabs');
+  if (!tabs) return;
+  let button = tabs.querySelector('[data-memory-tab]');
+  if (!button) {
+    button = document.createElement('button');
+    button.className = 'tab';
+    button.type = 'button';
+    button.dataset.memoryTab = 'true';
+    button.textContent = '项目记忆';
+    button.addEventListener('click', () => setProjectTab(project.id, 'memory'));
+    tabs.appendChild(button);
+  }
+  const active = routeInfo().tab === 'memory';
+  if (active) {
+    tabs.querySelectorAll('.tab').forEach(item => item.classList.remove('active'));
+    button.classList.add('active');
+  }
+}
+
 function injectOverviewActivity(project) {
   if (routeInfo().tab !== 'overview') return;
   const hero = projectView?.querySelector('.hero-state');
@@ -183,11 +289,36 @@ function injectOverviewActivity(project) {
   hero.insertAdjacentHTML('beforeend', activity);
 }
 
+function injectOverviewMemory(project) {
+  if (routeInfo().tab !== 'overview') return;
+  const hero = projectView?.querySelector('.hero-state');
+  if (!hero || hero.querySelector('[data-memory-overview]')) return;
+  const counts = project.memory?.counts || {};
+  const total = Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
+  if (!total) return;
+  hero.insertAdjacentHTML('beforeend', `
+    <div class="memory-overview" data-memory-overview>
+      <div class="memory-overview-head"><strong>项目长期记忆 · ${total} 条</strong><button class="text-action" type="button" data-open-memory>查看项目记忆</button></div>
+      <div class="memory-overview-chips">
+        ${Object.entries(memoryTypeLabels).map(([type, name]) => counts[type] ? `<span>${escapeHtml(name)} ${counts[type]}</span>` : '').join('')}
+      </div>
+    </div>
+  `);
+  hero.querySelector('[data-open-memory]')?.addEventListener('click', () => setProjectTab(project.id, 'memory'));
+}
+
 function injectDevelopmentEvolution(project) {
   if (routeInfo().tab !== 'development') return;
   const page = projectView?.querySelector('.development-page');
   if (!page || page.querySelector('[data-project-evolution]')) return;
   page.insertAdjacentHTML('afterbegin', evolutionMarkup(project));
+}
+
+function renderMemoryView(project) {
+  if (routeInfo().tab !== 'memory') return;
+  const body = projectView?.querySelector('.project-page-body');
+  if (!body || body.querySelector('[data-project-memory-page]')) return;
+  body.innerHTML = memoryPageMarkup(project);
 }
 
 async function enhanceProjectView() {
@@ -200,10 +331,16 @@ async function enhanceProjectView() {
     if (token !== requestToken) return;
     const project = (data.projects || []).find(item => item.id === route.projectId);
     if (!project) return;
+    ensureMemoryTab(project);
+    if (route.tab === 'memory') {
+      renderMemoryView(project);
+      return;
+    }
     injectOverviewActivity(project);
+    injectOverviewMemory(project);
     injectDevelopmentEvolution(project);
   } catch (error) {
-    console.warn('Project evolution enhancement failed:', error);
+    console.warn('Project enhancement failed:', error);
   }
 }
 
