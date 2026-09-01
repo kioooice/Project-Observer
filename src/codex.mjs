@@ -5,6 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { isInsidePath, normalizeFsPath, normalizeGitRemote } from './identity.mjs';
 import { readCodexStateThreads } from './codex-state.mjs';
+import { getSessionBindings } from './session-bindings.mjs';
 
 const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 const configuredSessionsDir = process.env.CODEX_SESSIONS_DIR ? path.resolve(process.env.CODEX_SESSIONS_DIR) : null;
@@ -12,8 +13,9 @@ const DEFAULT_ROOTS = configuredSessionsDir
   ? [configuredSessionsDir]
   : [path.join(codexHome, 'sessions'), path.join(codexHome, 'archived_sessions')];
 const MAX_FILES = Math.max(20, Math.min(1000, Number(process.env.PROJECT_OBSERVER_CODEX_MAX_SESSIONS || 250)));
+const EVENT_LIMIT_PER_PROJECT = Math.max(5, Math.min(30, Number(process.env.PROJECT_OBSERVER_CODEX_EVENT_LIMIT || 16)));
 
-function cleanPrompt(value) {
+function cleanPrompt(value, limit = 220) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   if (!text) return null;
   const lower = text.toLowerCase();
@@ -25,10 +27,22 @@ function cleanPrompt(value) {
     lower.startsWith('<task>') ||
     lower.startsWith('you are chatgpt')
   ) return null;
-  return text.length > 140 ? `${text.slice(0, 137)}…` : text;
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-function extractText(content, acceptedTypes) {
+function compactText(value, limit = 520) {
+  const text = String(value || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[*_>#~-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+function extractText(content, acceptedTypes = ['input_text', 'output_text', 'text']) {
   if (!Array.isArray(content)) return '';
   return content
     .filter(item => item && acceptedTypes.includes(item.type))
@@ -49,6 +63,16 @@ function parseGitInfo(raw) {
     sha,
     branch
   };
+}
+
+function readableFsPath(value) {
+  if (!value) return null;
+  let target = String(value);
+  if (process.platform === 'win32' && target.startsWith('\\\\?\\')) {
+    target = target.slice(4);
+    if (target.toUpperCase().startsWith('UNC\\')) target = `\\\\${target.slice(4)}`;
+  }
+  return target;
 }
 
 async function accessibleRoots() {
@@ -91,14 +115,95 @@ async function listRecentJsonl(basePaths) {
   return found.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, MAX_FILES);
 }
 
-async function parseSession(file) {
+function parseFunctionCall(payload, commandSamples) {
+  if (!payload || payload.type !== 'function_call') return 0;
+  const name = String(payload.name || 'tool');
+  let args = payload.arguments;
+  try {
+    if (typeof args === 'string') args = JSON.parse(args);
+  } catch {}
+  const command = args?.command || args?.cmd || args?.args || null;
+  if (command && commandSamples.length < 5) {
+    const text = Array.isArray(command) ? command.join(' ') : String(command);
+    commandSamples.push(`${name}: ${text}`.slice(0, 220));
+  }
+  return 1;
+}
+
+function extractVerification(text) {
+  if (!text) return [];
+  const cleaned = String(text)
+    .replace(/\r/g, '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .split(/\n+|(?<=[。！？；])\s+/)
+    .map(item => compactText(item, 220))
+    .filter(Boolean);
+
+  const keywords = /(验证|测试|通过|成功|工作区|干净|提交|推送|同步|build|lint|test|npm|git|接口|api|sessioncount|已写入|已显示|已完成)/i;
+  const seen = new Set();
+  const result = [];
+  for (const item of cleaned) {
+    if (!keywords.test(item)) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+    if (result.length >= 4) break;
+  }
+  return result;
+}
+
+function makeDevelopmentEvent({ firstPrompt, lastAssistant, userTurns, toolCalls, commandSamples }) {
+  const request = cleanPrompt(firstPrompt, 260);
+  const result = compactText(lastAssistant, 620);
+  const verification = extractVerification(lastAssistant);
+  if (!request && !result) return null;
+  return {
+    request: request || '未恢复到明确需求文本',
+    result: result || '会话中没有恢复到明确的最终结果说明。',
+    verification,
+    userTurns,
+    toolCalls,
+    commandSamples: commandSamples.slice(0, 3),
+    evidence: verification.length ? '会话内有明确验证记录' : '已恢复执行结果，暂无明确验证语句'
+  };
+}
+
+async function parseRollout(filePath, fallbackMtimeMs = null) {
+  const target = readableFsPath(filePath);
+  if (!target) return null;
+
   let meta = null;
   let firstPrompt = null;
+  let lastAssistant = null;
   let userTurns = 0;
-  let lastActivity = file.mtimeMs ? new Date(file.mtimeMs).toISOString() : null;
+  let toolCalls = 0;
+  let lastActivity = fallbackMtimeMs ? new Date(fallbackMtimeMs).toISOString() : null;
+  const seenUser = new Set();
+  const commandSamples = [];
 
-  const input = fs.createReadStream(file.path, { encoding: 'utf8' });
+  let input;
+  try {
+    input = fs.createReadStream(target, { encoding: 'utf8' });
+  } catch {
+    return null;
+  }
   const rl = readline.createInterface({ input, crlfDelay: Infinity });
+
+  const recordUser = (value) => {
+    const cleaned = cleanPrompt(value, 500);
+    if (!cleaned) return;
+    const key = cleaned.toLowerCase();
+    if (seenUser.has(key)) return;
+    seenUser.add(key);
+    userTurns += 1;
+    if (!firstPrompt) firstPrompt = cleaned;
+  };
+
+  const recordAssistant = (value) => {
+    const cleaned = String(value || '').trim();
+    if (cleaned) lastAssistant = cleaned;
+  };
 
   try {
     for await (const rawLine of rl) {
@@ -116,7 +221,7 @@ async function parseSession(file) {
         const rawMeta = payload.meta && typeof payload.meta === 'object' ? payload.meta : payload;
         const rawGit = payload.git || rawMeta.git || rawMeta.git_info || rawMeta.gitInfo || null;
         meta = {
-          id: rawMeta.id || path.basename(file.path, '.jsonl'),
+          id: rawMeta.id || path.basename(target, '.jsonl'),
           cwd: rawMeta.cwd || null,
           timestamp: rawMeta.timestamp || line.timestamp || null,
           modelProvider: rawMeta.model_provider || rawMeta.modelProvider || null,
@@ -125,26 +230,34 @@ async function parseSession(file) {
         continue;
       }
 
-      if (line.type === 'response_item' && line.payload?.type === 'message' && line.payload.role === 'user') {
-        const text = extractText(line.payload.content, ['input_text', 'text']);
-        const cleaned = cleanPrompt(text);
-        if (cleaned) {
-          userTurns += 1;
-          if (!firstPrompt) firstPrompt = cleaned;
+      if (line.type === 'response_item' && line.payload) {
+        const payload = line.payload;
+        if (payload.type === 'message') {
+          const text = extractText(payload.content);
+          if (payload.role === 'user') recordUser(text);
+          if (payload.role === 'assistant') recordAssistant(text);
+        } else {
+          toolCalls += parseFunctionCall(payload, commandSamples);
         }
         continue;
       }
 
       if (line.type === 'event_msg' && line.payload) {
         const payload = line.payload;
-        const type = String(payload.type || '');
+        const type = String(payload.type || '').toLowerCase();
         if (type === 'user_message' || type === 'user_input') {
-          const text = payload.message || payload.text || extractText(payload.content, ['input_text', 'text']);
-          const cleaned = cleanPrompt(text);
-          if (cleaned) {
-            userTurns += 1;
-            if (!firstPrompt) firstPrompt = cleaned;
-          }
+          recordUser(payload.message || payload.text || extractText(payload.content));
+        } else if (
+          type === 'agent_message' ||
+          type === 'assistant_message' ||
+          type === 'final_answer' ||
+          type === 'agent_response'
+        ) {
+          recordAssistant(payload.message || payload.text || extractText(payload.content));
+        } else if (type.includes('tool') || type.includes('exec') || type.includes('command')) {
+          toolCalls += 1;
+          const command = payload.command || payload.cmd || payload.name || null;
+          if (command && commandSamples.length < 5) commandSamples.push(String(command).slice(0, 220));
         }
       }
     }
@@ -154,27 +267,72 @@ async function parseSession(file) {
     rl.close();
   }
 
-  if (!meta?.cwd && !meta?.git?.remoteKey) return null;
-  const started = new Date(meta.timestamp || file.mtimeMs || Date.now());
+  let statMtime = fallbackMtimeMs;
+  if (!statMtime) {
+    try { statMtime = (await fsp.stat(target)).mtimeMs; } catch {}
+  }
+  const started = new Date(meta?.timestamp || statMtime || Date.now());
   const startedAt = Number.isNaN(started.getTime()) ? lastActivity : started.toISOString();
+
+  return {
+    meta,
+    firstPrompt,
+    lastAssistant,
+    userTurns,
+    toolCalls,
+    commandSamples,
+    startedAt,
+    lastActivity: lastActivity || startedAt,
+    developmentEvent: makeDevelopmentEvent({
+      firstPrompt,
+      lastAssistant,
+      userTurns,
+      toolCalls,
+      commandSamples
+    })
+  };
+}
+
+async function parseSession(file) {
+  const rollout = await parseRollout(file.path, file.mtimeMs);
+  const meta = rollout?.meta;
+  if (!meta?.cwd && !meta?.git?.remoteKey) return null;
 
   return {
     id: String(meta.id),
     projectPath: meta.cwd,
-    startedAt,
-    lastActivity: lastActivity || startedAt,
-    title: firstPrompt || 'Codex 会话（未恢复首条需求）',
-    userTurns,
+    startedAt: rollout.startedAt,
+    lastActivity: rollout.lastActivity,
+    title: cleanPrompt(rollout.firstPrompt, 180) || 'Codex 会话（未恢复首条需求）',
+    userTurns: rollout.userTurns,
     modelProvider: meta.modelProvider,
     storage: 'jsonl',
+    rolloutPath: file.path,
+    developmentEvent: rollout.developmentEvent,
     git: meta.git
+  };
+}
+
+async function enrichSessionFromRollout(session) {
+  if (session.developmentEvent || !session.rolloutPath) return session;
+  const rollout = await parseRollout(session.rolloutPath);
+  if (!rollout) return session;
+  return {
+    ...session,
+    title: cleanPrompt(rollout.firstPrompt, 180) || session.title,
+    userTurns: Math.max(session.userTurns || 0, rollout.userTurns || 0),
+    startedAt: session.startedAt || rollout.startedAt,
+    lastActivity: String(rollout.lastActivity || '') > String(session.lastActivity || '')
+      ? rollout.lastActivity
+      : session.lastActivity,
+    developmentEvent: rollout.developmentEvent
   };
 }
 
 function bestPathMatch(sessionPath, projects, useAliases = false) {
   const candidate = normalizeFsPath(sessionPath);
   if (!candidate) return null;
-  let best = null;
+  const matches = [];
 
   for (const project of projects) {
     const roots = useAliases
@@ -182,12 +340,16 @@ function bestPathMatch(sessionPath, projects, useAliases = false) {
       : [normalizeFsPath(project.path)];
 
     for (const root of roots) {
-      if (!isInsidePath(candidate, root)) continue;
-      if (!best || root.length > best.root.length) best = { project, root };
+      if (!root || !isInsidePath(candidate, root)) continue;
+      matches.push({ project, root, length: root.length });
     }
   }
 
-  return best?.project || null;
+  if (!matches.length) return null;
+  const maxLength = Math.max(...matches.map(item => item.length));
+  const strongest = matches.filter(item => item.length === maxLength);
+  const uniqueProjects = [...new Map(strongest.map(item => [item.project.identity?.key || item.project.path, item.project])).values()];
+  return uniqueProjects.length === 1 ? uniqueProjects[0] : null;
 }
 
 function matchCodexProjectRoots(session, projects) {
@@ -229,12 +391,39 @@ function matchCodexProjectRoots(session, projects) {
   return null;
 }
 
-function matchProject(session, projects) {
+function matchManualBinding(session, projects, bindings) {
+  const binding = bindings?.[session.id];
+  if (!binding) return null;
+
+  const byKey = projects.filter(project => project.identity?.key === binding.projectKey);
+  if (byKey.length === 1) {
+    return {
+      project: byKey[0],
+      match: { type: 'manual_binding', confidence: 'confirmed', reason: '人工确认绑定' }
+    };
+  }
+
+  if (binding.projectPath) {
+    const normalized = normalizeFsPath(binding.projectPath);
+    const byPath = projects.filter(project => normalizeFsPath(project.path) === normalized);
+    if (byPath.length === 1) {
+      return {
+        project: byPath[0],
+        match: { type: 'manual_binding_path', confidence: 'confirmed', reason: '人工确认绑定（按保存路径恢复）' }
+      };
+    }
+  }
+  return null;
+}
+
+function matchProject(session, projects, bindings) {
+  const manual = matchManualBinding(session, projects, bindings);
+  if (manual) return manual;
+
   const canonicalProject = matchCodexProjectRoots(session, projects);
   if (canonicalProject) return canonicalProject;
 
   const sessionRemoteKey = session.git?.remoteKey || null;
-
   if (sessionRemoteKey) {
     const remoteMatches = projects.filter(project => project.identity?.remoteKey === sessionRemoteKey);
     if (remoteMatches.length === 1) {
@@ -305,6 +494,7 @@ function mergeSession(existing, incoming) {
     projectId: incoming.projectId || existing.projectId || null,
     codexProject: incoming.codexProject || existing.codexProject || null,
     rolloutPath: incoming.rolloutPath || existing.rolloutPath || null,
+    developmentEvent: incoming.developmentEvent || existing.developmentEvent || null,
     git: {
       ...(existing.git || {}),
       ...(incoming.git || {}),
@@ -316,7 +506,11 @@ function mergeSession(existing, incoming) {
 }
 
 export async function attachCodexSessions(projects) {
-  const [roots, stateDb] = await Promise.all([accessibleRoots(), readCodexStateThreads()]);
+  const [roots, stateDb, bindings] = await Promise.all([
+    accessibleRoots(),
+    readCodexStateThreads(),
+    getSessionBindings()
+  ]);
   const jsonlAvailable = roots.length > 0;
   const available = jsonlAvailable || stateDb.available;
   const sourcePaths = [stateDb.available ? stateDb.path : null, ...roots].filter(Boolean);
@@ -360,11 +554,12 @@ export async function attachCodexSessions(projects) {
     .sort((a, b) => String(b.lastActivity || '').localeCompare(String(a.lastActivity || '')));
 
   for (const session of allSessions) {
-    const result = matchProject(session, projects);
+    const result = matchProject(session, projects, bindings);
     if (!result) {
-      if (unmatchedSamples.length < 8) {
+      if (unmatchedSamples.length < 12) {
         unmatchedSamples.push({
           id: session.id,
+          title: session.title,
           projectPath: session.projectPath,
           projectId: session.projectId || null,
           codexProjectName: session.codexProject?.name || null,
@@ -395,9 +590,12 @@ export async function attachCodexSessions(projects) {
   for (const project of projects) {
     const bucket = project.agentSessions.codex;
     bucket.sessions.sort((a, b) => String(b.lastActivity || '').localeCompare(String(a.lastActivity || '')));
+    const selected = bucket.sessions.slice(0, EVENT_LIMIT_PER_PROJECT);
+    const enriched = [];
+    for (const session of selected) enriched.push(await enrichSessionFromRollout(session));
     bucket.sessionCount = bucket.sessions.length;
     bucket.lastActivity = bucket.sessions[0]?.lastActivity || null;
-    bucket.sessions = bucket.sessions.slice(0, 30);
+    bucket.sessions = enriched;
   }
 
   return {
@@ -413,6 +611,7 @@ export async function attachCodexSessions(projects) {
         unmatchedSessions: Math.max(0, allSessions.length - matchedSessions),
         unmatchedSamples,
         matchMethods,
+        manualBindingCount: Object.keys(bindings || {}).length,
         stateDb: {
           available: stateDb.available,
           readable: stateDb.readable ?? false,
