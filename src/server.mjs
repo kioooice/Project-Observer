@@ -6,6 +6,7 @@ import { discoverProjects } from './scanner.mjs';
 import { attachGitContext } from './git-context.mjs';
 import { attachProjectIdentities } from './identity.mjs';
 import { attachCodexSessions } from './codex.mjs';
+import { attachProjectInsights } from './project-insight.mjs';
 import {
   attachKnownPathAliases,
   recordObservations,
@@ -74,6 +75,7 @@ async function scanWithActivity(root, depth, maxProjects = 80) {
   await attachProjectIdentities(base.projects);
   await attachKnownPathAliases(base.projects);
   const enriched = await attachCodexSessions(base.projects);
+  attachProjectInsights(enriched.projects);
   const observation = await recordObservations(enriched.projects);
   return {
     ...base,
@@ -109,12 +111,7 @@ const server = http.createServer(async (req, res) => {
       if (!projectPath) return sendJson(res, 400, { error: 'Missing project path' });
       const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 20)));
       const observations = await getProjectObservations(projectPath, limit, projectKey);
-      return sendJson(res, 200, {
-        projectPath,
-        projectKey,
-        observations,
-        store: getObservationStoreInfo()
-      });
+      return sendJson(res, 200, { projectPath, projectKey, observations, store: getObservationStoreInfo() });
     }
 
     if (url.pathname === '/api/session-bindings' && req.method === 'POST') {
@@ -125,11 +122,7 @@ const server = http.createServer(async (req, res) => {
         projectPath: body.projectPath,
         projectName: body.projectName
       });
-      return sendJson(res, 200, {
-        ok: true,
-        binding,
-        store: getSessionBindingStoreInfo()
-      });
+      return sendJson(res, 200, { ok: true, binding, store: getSessionBindingStoreInfo() });
     }
 
     if (url.pathname === '/api/session-bindings' && req.method === 'DELETE') {
