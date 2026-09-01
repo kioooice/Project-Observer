@@ -8,7 +8,7 @@ async function git(cwd, args) {
     const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
       windowsHide: true,
       timeout: 7000,
-      maxBuffer: 1024 * 1024 * 6
+      maxBuffer: 1024 * 1024 * 8
     });
     return stdout.trim();
   } catch {
@@ -59,6 +59,21 @@ async function recentCommitsWithFiles(projectPath, limit = 16) {
   }).filter(item => item.hash);
 }
 
+async function historyCommits(projectPath, limit = 180) {
+  const format = '%H%x1f%h%x1f%ad%x1f%s';
+  const out = await git(projectPath, [
+    'log',
+    `-${limit}`,
+    '--date=iso-strict',
+    `--pretty=format:${format}`
+  ]);
+  if (!out) return [];
+  return out.split('\n').map(line => {
+    const [hash, shortHash, date, subject] = line.split('\x1f');
+    return { hash, shortHash, date, subject };
+  }).filter(item => item.hash);
+}
+
 async function readSyncState(projectPath, branch, dirtyFiles) {
   const upstream = await git(projectPath, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
   if (!upstream) {
@@ -94,13 +109,18 @@ async function readSyncState(projectPath, branch, dirtyFiles) {
 
 export async function attachGitContext(projects) {
   for (const project of projects) {
-    const commits = await recentCommitsWithFiles(project.path);
+    const [commits, history] = await Promise.all([
+      recentCommitsWithFiles(project.path),
+      historyCommits(project.path)
+    ]);
     const dirtyFiles = project.git?.dirtyFiles || 0;
     const sync = await readSyncState(project.path, project.git?.branch || null, dirtyFiles);
 
     project.git = {
       ...(project.git || {}),
       recentCommits: commits,
+      historyCommits: history,
+      historyTruncated: history.length >= 180,
       latestCommit: commits[0]
         ? { date: commits[0].date, subject: commits[0].subject, hash: commits[0].hash, shortHash: commits[0].shortHash }
         : project.git?.latestCommit || null,
