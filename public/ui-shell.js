@@ -1,27 +1,49 @@
 const scanBtn = document.querySelector('#scanBtn');
 const rootInput = document.querySelector('#rootInput');
+const scanMessage = document.querySelector('#scanMessage');
+const projectView = document.querySelector('#projectView');
 
-if (scanBtn && rootInput) {
-  scanBtn.addEventListener('click', event => {
+async function refreshProjectLibrary() {
+  if (rootInput) rootInput.value = '';
+  rootInput?.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Enter',
+    bubbles: true
+  }));
+}
+
+if (scanBtn) {
+  scanBtn.textContent = '添加项目';
+  scanBtn.addEventListener('click', async event => {
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    const current = rootInput.value.trim();
-    const next = window.prompt('扫描项目目录', current || 'D:\\Projects');
+    const next = window.prompt('添加项目目录', 'D:\\Projects\\my-project');
     if (next == null) return;
-
     const value = next.trim();
-    if (value) rootInput.value = value;
+    if (!value) return;
 
-    rootInput.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'Enter',
-      bubbles: true
-    }));
+    scanBtn.disabled = true;
+    if (scanMessage) scanMessage.textContent = '正在加入项目库…';
+
+    try {
+      const response = await fetch('/api/project-library', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: value })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '添加失败');
+      if (scanMessage) scanMessage.textContent = '已加入项目库，正在刷新…';
+      await refreshProjectLibrary();
+    } catch (error) {
+      if (scanMessage) scanMessage.textContent = `添加失败：${error.message}`;
+      window.alert(`添加项目失败：${error.message}`);
+    } finally {
+      scanBtn.disabled = false;
+    }
   }, true);
 }
 
-const projectView = document.querySelector('#projectView');
-let cachedRoot = null;
 let cachedAt = 0;
 let cachedData = null;
 let requestToken = 0;
@@ -53,18 +75,14 @@ function dateRange(startAt, endAt) {
   return start === end ? start : `${start} → ${end}`;
 }
 
-async function loadProjectsForCurrentRoot() {
-  const root = rootInput?.value?.trim() || '';
+async function loadProjectsFromLibrary() {
   const now = Date.now();
-  if (cachedData && cachedRoot === root && now - cachedAt < 15000) return cachedData;
+  if (cachedData && now - cachedAt < 15000) return cachedData;
 
-  const query = new URLSearchParams({ depth: '2' });
-  if (root) query.set('root', root);
-  const response = await fetch(`/api/projects?${query}`);
+  const response = await fetch('/api/projects');
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || '项目演进读取失败');
 
-  cachedRoot = root;
   cachedAt = now;
   cachedData = data;
   return data;
@@ -178,7 +196,7 @@ async function enhanceProjectView() {
   const token = ++requestToken;
 
   try {
-    const data = await loadProjectsForCurrentRoot();
+    const data = await loadProjectsFromLibrary();
     if (token !== requestToken) return;
     const project = (data.projects || []).find(item => item.id === route.projectId);
     if (!project) return;
