@@ -2,7 +2,7 @@
 
 Project Observer 是一个本地优先的**项目状态、项目记忆与项目理解工作台**。它的目标不是替项目决定“下一步做什么”，而是尽可能忠实地恢复：**项目是什么、由什么组成、发生过什么、当前做到哪里、哪些结论有证据支持，以及项目为什么会变成今天这样。**
 
-## 当前版本 v0.10
+## 当前版本 v0.11
 
 当前主链路：
 
@@ -12,6 +12,7 @@ Project Observer 是一个本地优先的**项目状态、项目记忆与项目�
 → README / docs / Git / Codex / Project Memory
 → Evidence Map
 → Project Model
+→ Commit Flow
 → 项目概览 / 开发演进 / 项目记忆 / 证据
 ```
 
@@ -24,11 +25,13 @@ Project Observer 是一个本地优先的**项目状态、项目记忆与项目�
 - Project Memory：持久保存决策、问题经验、约束、里程碑和未解决事项；
 - Evidence Map：给项目理解结论建立证据编号；
 - Project Model：恢复项目定位、系统组成、职责链、核心资产、验证方式、运行/交付形态和当前重点；
+- Commit Flow：把最近连续提交合并成开发批次，恢复改动文件、代码符号、直接引用关系、影响范围和可解释的运行流程；
 - 可选 LLM 语义综合：模型输出必须引用 Evidence Map 中存在的 evidence ID，否则结论不会被接受；
 - 观察历史：项目事实发生变化时才追加记录；
 - Self Monitor：Project Observer 自身与其他项目使用同一套规则。
 
 尚未完成：
+- Feature Graph：把多次提交长期聚合成功能级关系图和功能演进图；
 - Project Context Pack：给新的 Codex / Claude 会话直接提供压缩后的项目长期上下文；
 - Claude / Cursor / 其他 Agent 适配；
 - “AI 声称完成”与客观验证证据的系统化区分；
@@ -63,7 +66,7 @@ D:\Projects\scholarscope-desktop
 
 ## Repository Map 与 Project Model
 
-v0.10 不再假设 README 第一段就是完整项目说明。每个项目会先读取可验证的仓库事实，例如：
+Project Observer 不再假设 README 第一段就是完整项目说明。每个项目会先读取可验证的仓库事实，例如：
 
 - 主要目录及职责；
 - Git 跟踪文件；
@@ -74,6 +77,33 @@ v0.10 不再假设 README 第一段就是完整项目说明。每个项目会先
 - Docker / GitHub Actions / Tauri / Electron 等运行和交付配置。
 
 这些事实与 README、Git、Codex、Project Memory 一起进入 Evidence Map，再形成面向人的 Project Model。
+
+## Commit Flow
+
+v0.11 开始把“这次提交改了哪些文件”进一步转成“这轮改动影响了什么、可能怎么运作”。
+
+Project Observer 会先把短时间连续的 Git 提交合并为一个开发批次，再分析：
+
+- 新增 / 修改 / 删除了哪些文件；
+- diff 中出现了哪些函数、类或代码符号；
+- 改动文件属于界面、接口、服务、数据、测试、构建等哪一层；
+- 改动文件之间是否存在真实的 `import / require` 等直接引用；
+- 是否有足够证据形成跨模块运行流程。
+
+可信边界：
+
+```text
+真实代码引用
+→ 较高可信关系
+
+跨多个运行层，但无直接调用证据
+→ 结构推断，并明确标注
+
+主要集中在单一模块或证据不足
+→ 不生成运行流程，只展示影响范围
+```
+
+Commit Flow 当前显示在项目的 **开发演进** 页面。它不是完整的动态调用追踪，也不会把每个 commit 强行画成业务流程图。
 
 ## 可选语义模型
 
@@ -173,6 +203,7 @@ Project Observer 会兼容：
 - 不默认生成“下一步工作”；优先展示证据支持的事实和明确未完成项。
 - README 只是证据来源之一，不是项目真相本身。
 - 代码目录、入口、数据、测试、评测、部署、Git、AI Session 和项目记忆共同构成项目认知。
+- Commit Flow 必须区分真实代码关系与结构推断，证据不足时宁可不画运行流程。
 - “AI 说完成”与“经过测试/用户体验验证”必须逐步分开。
 - 不给 Project Observer 自己写特殊规则；它必须能用同一套逻辑分析自身。
 - 项目越长期、越复杂，越应该保存“为什么变成这样”，而不仅是“现在有哪些文件”。
