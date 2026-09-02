@@ -7,6 +7,7 @@ import { attachGitContext } from './git-context.mjs';
 import { attachProjectIdentities } from './identity.mjs';
 import { attachCodexSessions } from './codex.mjs';
 import { attachRepositoryMaps } from './repository-map.mjs';
+import { attachCommitFlows } from './commit-flow.mjs';
 import { attachProjectInsights } from './project-insight.mjs';
 import { attachProjectMemory, getProjectMemoryStoreInfo } from './project-memory.mjs';
 import {
@@ -88,6 +89,7 @@ async function enrichProjects(projects) {
   await attachKnownPathAliases(projects);
   const enriched = await attachCodexSessions(projects);
   await attachRepositoryMaps(enriched.projects);
+  await attachCommitFlows(enriched.projects);
   attachProjectInsights(enriched.projects);
   await attachProjectMemory(enriched.projects);
   await attachProjectUnderstanding(enriched.projects);
